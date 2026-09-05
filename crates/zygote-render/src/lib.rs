@@ -39,16 +39,18 @@ mod nodes;
 mod params;
 mod plugin;
 mod scene;
+mod sources;
 
-pub use app::{Input, RustNode, ZygoteApp};
+pub use app::{Input, RustNode, RustSource, ZygoteApp};
 pub use capture::CaptureSettings;
 pub use plugin::RenderSettings;
+pub use sources::FrameInfo;
 /// The data model, re-exported so projects need only this crate.
 pub use zygote_core as core;
 
 /// Everything a project binary needs.
 pub mod prelude {
-    pub use crate::{Input, RustNode, ZygoteApp};
+    pub use crate::{FrameInfo, Input, RustNode, RustSource, ZygoteApp};
     pub use zygote_core::{
         Graph, NodeDef, NodeId, NodeKind, NodeLibrary, NodeParams, NodeSpec, ParamPath, ParamSpec,
         ParamValue,

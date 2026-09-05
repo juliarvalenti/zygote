@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use bevy::camera::{Hdr, PerspectiveProjection, Projection};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use nannou::prelude::*;
-use zygote_core::{Graph, InputDef, NodeDef, NodeLibrary, NodeOrigin, NodeParams};
+use zygote_core::{CpuSourceInfo, Graph, InputDef, NodeDef, NodeLibrary, NodeOrigin, NodeParams};
+
+use crate::sources::{FrameInfo, SourceFactories, SourceFactory};
 
 use crate::capture::{CapturePlugin, CaptureSettings};
 use crate::plugin::{RenderSettings, ZygotePlugin};
@@ -65,6 +67,46 @@ pub trait RustNode {
             params: Self::Params::specs(),
             source: Self::SHADER.to_owned(),
             origin: NodeOrigin::Rust(std::any::type_name::<Self>().to_owned()),
+            cpu_source: None,
+        }
+    }
+}
+
+/// A texture produced on the CPU every frame: simulations, decoders,
+/// anything with state a fullscreen pass cannot hold. Declared like a
+/// [`RustNode`] (typed params, no Bevy types); Zygote owns the texture,
+/// uploads it, and wires it into the graph like any other node output.
+pub trait RustSource: Send + Sync + 'static {
+    /// Name used as the graph `type`.
+    const NAME: &'static str;
+    const DOC: &'static str = "";
+    /// Texture size in pixels.
+    const WIDTH: u32;
+    const HEIGHT: u32;
+    /// Sample with nearest filtering (pixel look) instead of linear.
+    const NEAREST: bool = false;
+    type Params: NodeParams;
+
+    fn new() -> Self;
+
+    /// Write RGBA8 pixels (`WIDTH * HEIGHT * 4` bytes, row-major) for this
+    /// frame. `frame.dt` is 0 while the transport is paused.
+    fn update(&mut self, params: &Self::Params, frame: &FrameInfo, pixels: &mut [u8]);
+
+    fn definition() -> NodeDef {
+        NodeDef {
+            name: Self::NAME.to_owned(),
+            doc: Self::DOC.to_owned(),
+            inputs: Vec::new(),
+            feedback: false,
+            params: Self::Params::specs(),
+            source: String::new(),
+            origin: NodeOrigin::Rust(std::any::type_name::<Self>().to_owned()),
+            cpu_source: Some(CpuSourceInfo {
+                width: Self::WIDTH,
+                height: Self::HEIGHT,
+                nearest: Self::NEAREST,
+            }),
         }
     }
 }
@@ -73,6 +115,7 @@ pub trait RustNode {
 pub struct ZygoteApp {
     settings: RenderSettings,
     library: NodeLibrary,
+    sources: SourceFactories,
     asset_root: Option<PathBuf>,
     node_dirs: Vec<PathBuf>,
     graph_file: Option<PathBuf>,
@@ -92,6 +135,7 @@ impl ZygoteApp {
         Self {
             settings: RenderSettings::default(),
             library: NodeLibrary::builtin(),
+            sources: SourceFactories::default(),
             asset_root: None,
             node_dirs: Vec::new(),
             graph_file: None,
@@ -121,6 +165,17 @@ impl ZygoteApp {
             self.errors.push(format!("node `{}`: {e}", N::NAME));
         }
         self.library.insert(def);
+        self
+    }
+
+    /// Register a CPU texture source.
+    pub fn register_source<S: RustSource>(mut self) -> Self {
+        let def = S::definition();
+        if let Err(e) = def.validate() {
+            self.errors.push(format!("source `{}`: {e}", S::NAME));
+        }
+        self.library.insert(def);
+        self.sources.insert(S::NAME, SourceFactory::of::<S>());
         self
     }
 
@@ -298,7 +353,7 @@ impl ZygoteApp {
 
         let mut builder = nannou::app(model)
             .update(update)
-            .add_plugin(ZygotePlugin::new(self.settings, self.library));
+            .add_plugin(ZygotePlugin::new(self.settings, self.library, self.sources));
         if let Some(capture) = self.capture {
             builder = builder.add_plugin(CapturePlugin(capture));
         }

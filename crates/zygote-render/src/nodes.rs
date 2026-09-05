@@ -23,9 +23,14 @@ use zygote_core::{
     MAX_INPUTS, NodeDef, NodeId, NodeKind, NodeOrigin, ParamPath, ParamValue, UNIFORM_BYTES,
 };
 
+use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::render::render_resource::{Extent3d, TextureDimension};
+
 use crate::materials::{Fallbacks, FrameUniform, NodeMaterial, ParamsBlob, node_sampler};
 use crate::params::{FrameClock, ParamState};
 use crate::plugin::{GraphRes, LibraryRes, NodeResolution};
+use crate::sources::{LiveSource, LiveSources, SourceFactories};
 
 /// First render layer used by node passes. Layer 0 belongs to the window.
 const FIRST_NODE_LAYER: usize = 8;
@@ -208,6 +213,8 @@ pub fn build_runtime(
     mut materials: ResMut<Assets<NodeMaterial>>,
     mut shaders: ResMut<Assets<Shader>>,
     mut node_shaders: ResMut<NodeShaders>,
+    factories: Res<SourceFactories>,
+    mut live_sources: ResMut<LiveSources>,
 ) {
     let order = match graph.topo_order() {
         Ok(order) => order,
@@ -245,6 +252,51 @@ pub fn build_runtime(
                     "node `{id}`: live camera input (device {device}) has no capture backend in this build; showing placeholder"
                 );
                 (Output::Single(fallbacks.camera_placeholder.clone()), None)
+            }
+            NodeKind::Shader { node: def_name }
+                if library
+                    .get(def_name)
+                    .is_some_and(|d| d.cpu_source.is_some()) =>
+            {
+                let def = library.get(def_name).expect("checked");
+                let info = def.cpu_source.expect("checked");
+                let Some(factory) = factories.get(def_name) else {
+                    error!("node `{id}`: CPU source `{def_name}` has no registered implementation");
+                    continue;
+                };
+                let mut image = Image::new(
+                    Extent3d {
+                        width: info.width,
+                        height: info.height,
+                        ..Default::default()
+                    },
+                    TextureDimension::D2,
+                    vec![0; (info.width * info.height * 4) as usize],
+                    TextureFormat::Rgba8UnormSrgb,
+                    RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                );
+                let filter = if info.nearest {
+                    ImageFilterMode::Nearest
+                } else {
+                    ImageFilterMode::Linear
+                };
+                image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+                    address_mode_u: ImageAddressMode::ClampToEdge,
+                    address_mode_v: ImageAddressMode::ClampToEdge,
+                    address_mode_w: ImageAddressMode::ClampToEdge,
+                    mag_filter: filter,
+                    min_filter: filter,
+                    mipmap_filter: ImageFilterMode::Linear,
+                    ..Default::default()
+                });
+                let handle = images.add(image);
+                live_sources.0.push(LiveSource {
+                    node: id.clone(),
+                    def: def.name.clone(),
+                    image: handle.clone(),
+                    source: factory.create(),
+                });
+                (Output::Single(handle), None)
             }
             NodeKind::Shader { node: def_name } => {
                 let Some(def) = library.get(def_name) else {

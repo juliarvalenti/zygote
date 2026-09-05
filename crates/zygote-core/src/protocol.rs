@@ -11,6 +11,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::{GraphStructure, ParamPath};
+use crate::modulate::{GateEvent, Modulation};
 use crate::params::{ParamDescriptor, ParamValue};
 
 /// Bumped whenever a message shape changes incompatibly. Both sides announce
@@ -60,6 +61,12 @@ pub enum Message {
     /// UI → renderer: place the output window (logical pixels). `None` restores
     /// the renderer's default size and position.
     Arrange { bounds: Option<WindowBounds> },
+    /// UI → renderer: the show's modulation setup. The renderer evaluates it
+    /// per frame on its transport clock; the UI evaluates the same definition
+    /// locally for display, so the two agree.
+    Modulation { modulation: Modulation },
+    /// UI → renderer: a trigger's gate changed at transport time.
+    Gate { event: GateEvent },
     /// UI → renderer: liveness probe.
     Ping,
     /// Renderer → UI: reply to `Ping`.
@@ -267,6 +274,24 @@ mod tests {
             ],
         };
         assert_eq!(Message::decode(&msg.encode()).unwrap(), msg);
+    }
+
+    #[test]
+    fn modulation_and_gate_roundtrip() {
+        let mut m = Modulation::default();
+        m.sources
+            .push(crate::modulate::ModSource::envelope("env1", "hit"));
+        m.assign(&ParamPath::new("haze", "density"), Some("env1"), 0.8);
+        let msg = Message::Modulation { modulation: m };
+        assert_eq!(Message::decode(&msg.encode()).unwrap(), msg);
+        let gate = Message::Gate {
+            event: GateEvent {
+                trigger: "hit".into(),
+                on: true,
+                time: 3.5,
+            },
+        };
+        assert_eq!(Message::decode(&gate.encode()).unwrap(), gate);
     }
 
     #[test]

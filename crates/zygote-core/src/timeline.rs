@@ -10,7 +10,18 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::ParamPath;
+use crate::modulate::Modulation;
 use crate::params::ParamValue;
+
+/// What a learned key does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum KeyAction {
+    /// Gate a named trigger while the key is held.
+    Trigger { trigger: String },
+    /// Park on (and select) a cue.
+    Cue { id: u32 },
+}
 
 /// How the timeline moves *into* a cue from the previous one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -44,6 +55,7 @@ pub struct Cue {
     pub values: BTreeMap<ParamPath, ParamValue>,
 }
 
+/// A show: cues along a time axis plus the modulation setup and key map.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Timeline {
     /// Cues, kept sorted by time.
@@ -52,8 +64,18 @@ pub struct Timeline {
     pub duration: f32,
     #[serde(default = "default_true")]
     pub looping: bool,
+    /// Shared modulation sources and per-parameter assignments.
+    #[serde(default, skip_serializing_if = "modulation_is_empty")]
+    pub modulation: Modulation,
+    /// Learned keys, by gpui key name (`a`, `shift-q`, …).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, KeyAction>,
     #[serde(default)]
     next_id: u32,
+}
+
+fn modulation_is_empty(m: &Modulation) -> bool {
+    m.sources.is_empty() && m.assignments.is_empty()
 }
 
 fn default_true() -> bool {
@@ -66,6 +88,8 @@ impl Default for Timeline {
             cues: Vec::new(),
             duration: 8.0,
             looping: true,
+            modulation: Modulation::default(),
+            keys: BTreeMap::new(),
             next_id: 1,
         }
     }
@@ -283,8 +307,29 @@ mod tests {
 
     #[test]
     fn json_roundtrip() {
-        let tl = two_cue_timeline();
+        let mut tl = two_cue_timeline();
+        tl.modulation.sources.push(crate::modulate::ModSource::lfo(
+            "lfo1",
+            0.5,
+            crate::modulate::LfoShape::Sine,
+        ));
+        tl.modulation
+            .assign(&"warp.amount".parse().unwrap(), Some("lfo1"), 0.2);
+        tl.keys.insert(
+            "q".into(),
+            KeyAction::Trigger {
+                trigger: "hit".into(),
+            },
+        );
+        tl.keys.insert("1".into(), KeyAction::Cue { id: 1 });
         let back = Timeline::from_json(&tl.to_json().unwrap()).unwrap();
         assert_eq!(back, tl);
+    }
+
+    #[test]
+    fn old_files_without_modulation_still_load() {
+        let json = r#"{"cues":[],"duration":4.0}"#;
+        let tl = Timeline::from_json(json).unwrap();
+        assert!(tl.modulation.sources.is_empty() && tl.keys.is_empty());
     }
 }

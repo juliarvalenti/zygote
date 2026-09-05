@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
-use zygote_core::{ModContext, ParamPath, ParamValue, ResolvedParams, resolve_params};
+use zygote_core::{
+    GateLog, ModContext, Modulation, ParamPath, ParamValue, ResolvedParams, resolve_params,
+};
 
 use crate::plugin::{AudioBandsRes, GraphRes, LibraryRes};
 
@@ -20,6 +22,10 @@ pub struct ParamState {
     pub resolved: ResolvedParams,
     /// Last transport state reported by a client, if any.
     pub transport: Option<Transport>,
+    /// The show's modulation setup, as sent by the UI.
+    pub modulation: Modulation,
+    /// Gate events received from the UI.
+    pub gates: GateLog,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +102,13 @@ pub fn resolve(
         dt: clock.dt,
         audio: **audio,
     };
-    let resolved = resolve_params(&graph, &library, &ctx, &BTreeMap::new(), &state.overrides);
+    let offsets = state.modulation.offsets(&ctx, &state.gates);
+    let resolved = resolve_params(
+        &graph,
+        &library,
+        &BTreeMap::new(),
+        &state.overrides,
+        &offsets,
+    );
     state.resolved = resolved;
 }

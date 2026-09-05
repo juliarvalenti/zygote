@@ -62,21 +62,5 @@
       }
     }
   ],
-  "output": "grade",
-  "modulations": [
-    {
-      "target": "warp.amount",
-      "source": "lfo",
-      "rate_hz": 0.1,
-      "phase": 0.0,
-      "shape": "sine",
-      "depth": 0.05
-    },
-    {
-      "target": "feedback.hue_shift",
-      "source": "audio_band",
-      "band": 1,
-      "depth": 0.1
-    }
-  ]
+  "output": "grade"
 }

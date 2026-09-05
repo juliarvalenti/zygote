@@ -57,8 +57,22 @@ pub struct NodeDef {
     #[serde(default)]
     pub params: Vec<ParamSpec>,
     /// WGSL fragment body (imports allowed, no bindings; those are generated).
+    /// Empty for CPU sources.
     pub source: String,
     pub origin: NodeOrigin,
+    /// Set for nodes whose texture is produced on the CPU each frame
+    /// (simulations, decoders) instead of by a fullscreen pass: `(width, height, nearest)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_source: Option<CpuSourceInfo>,
+}
+
+/// Texture produced by a CPU source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CpuSourceInfo {
+    pub width: u32,
+    pub height: u32,
+    /// Sample with nearest filtering (pixel look) instead of linear.
+    pub nearest: bool,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -108,6 +122,7 @@ impl NodeDef {
             params: Vec::new(),
             source: source.to_owned(),
             origin,
+            cpu_source: None,
         };
         for (idx, raw) in source.lines().enumerate() {
             let line = idx + 1;

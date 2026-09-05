@@ -6,7 +6,8 @@ use bevy::shader::Shader;
 use zygote_core::{AudioBands, DEFAULT_PORT, Graph, NodeLibrary};
 
 use crate::materials::{Fallbacks, NodeMaterial};
-use crate::{net, nodes, params, scene};
+use crate::sources::{LiveSources, SourceFactories};
+use crate::{net, nodes, params, scene, sources};
 
 /// Everything the render process needs to know at startup.
 #[derive(Clone, Debug)]
@@ -70,11 +71,16 @@ pub enum ZygoteSet {
 pub struct ZygotePlugin {
     settings: RenderSettings,
     library: NodeLibrary,
+    sources: SourceFactories,
 }
 
 impl ZygotePlugin {
-    pub fn new(settings: RenderSettings, library: NodeLibrary) -> Self {
-        Self { settings, library }
+    pub fn new(settings: RenderSettings, library: NodeLibrary, sources: SourceFactories) -> Self {
+        Self {
+            settings,
+            library,
+            sources,
+        }
     }
 }
 
@@ -97,7 +103,9 @@ impl Plugin for ZygotePlugin {
             })
             .init_resource::<params::ParamState>()
             .init_resource::<Fallbacks>()
-            .init_resource::<nodes::NodeShaders>();
+            .init_resource::<nodes::NodeShaders>()
+            .insert_resource(self.sources.clone())
+            .init_resource::<LiveSources>();
 
         app.configure_sets(
             Update,
@@ -129,6 +137,7 @@ impl Plugin for ZygotePlugin {
                 nodes::swap_feedback,
                 nodes::rewire,
                 nodes::apply_params,
+                sources::update_sources,
             )
                 .chain()
                 .in_set(ZygoteSet::Apply),

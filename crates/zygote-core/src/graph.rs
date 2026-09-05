@@ -303,9 +303,6 @@ pub struct Graph {
     pub nodes: Vec<NodeSpec>,
     /// The node whose texture is shown in the window.
     pub output: NodeId,
-    /// Time / LFO / audio modulations applied on top of base values.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub modulations: Vec<crate::modulate::Modulation>,
 }
 
 /// UI-facing summary of a graph: what to draw, nothing about how to render it.
@@ -341,7 +338,6 @@ impl Graph {
             name: name.into(),
             nodes: Vec::new(),
             output: output.into(),
-            modulations: Vec::new(),
         }
     }
 
@@ -402,15 +398,6 @@ impl Graph {
                 .with_param("preset", "warm")
                 .with_param("palette_mix", 0.3),
         );
-        graph.modulations.push(crate::modulate::Modulation {
-            target: ParamPath::new("warp", "amount"),
-            source: crate::modulate::Modulator::Lfo {
-                rate_hz: 0.1,
-                phase: 0.0,
-                shape: crate::modulate::LfoShape::Sine,
-            },
-            depth: 0.05,
-        });
         graph
     }
 
@@ -436,7 +423,6 @@ impl Graph {
         for node in &mut self.nodes {
             node.inputs.retain(|input| input != id);
         }
-        self.modulations.retain(|m| &m.target.node != id);
         Some(removed)
     }
 

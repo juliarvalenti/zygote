@@ -19,17 +19,20 @@ pub use graph::{
     Graph, GraphError, GraphStructure, InputLink, NodeId, NodeKind, NodeSpec, NodeSummary,
     ParamPath,
 };
-pub use modulate::{AudioBands, LfoShape, ModContext, Modulation, Modulator};
+pub use modulate::{
+    Adsr, Assignment, AudioBands, GateEvent, GateLog, LfoShape, ModContext, ModSource, Modulation,
+    SourceKind,
+};
 pub use node_def::{
-    BUILTIN_NODES, HeaderError, InputDef, MAX_INPUTS, NodeDef, NodeLibrary, NodeOrigin,
-    PREVIOUS_INPUT, UNIFORM_BYTES, UniformLayout, input_bindings, previous_bindings,
+    BUILTIN_NODES, CpuSourceInfo, HeaderError, InputDef, MAX_INPUTS, NodeDef, NodeLibrary,
+    NodeOrigin, PREVIOUS_INPUT, UNIFORM_BYTES, UniformLayout, input_bindings, previous_bindings,
 };
 pub use params::{ParamDescriptor, ParamKind, ParamSpec, ParamType, ParamValue};
 pub use protocol::{
     DEFAULT_PORT, Message, PROTOCOL_VERSION, ParamReceiver, ParamSender, WindowBounds,
 };
-pub use resolve::{ResolvedParams, resolve_params};
-pub use timeline::{Cue, Timeline, Transition};
+pub use resolve::{ResolvedParams, apply_offset, resolve_params};
+pub use timeline::{Cue, KeyAction, Timeline, Transition};
 
 /// Implemented by `#[derive(NodeParams)]` structs: a typed view of a node's
 /// parameters whose declaration is also the node's [`ParamSpec`] list.

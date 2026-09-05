@@ -37,7 +37,6 @@ fn showcase_example_matches_builtin() {
     let file = Graph::from_json(GRAPHS[1].1).unwrap();
     assert_eq!(file.output, NodeId::new("grade"));
     assert_eq!(file.nodes.len(), Graph::showcase().nodes.len());
-    assert_eq!(file.modulations.len(), 2);
 }
 
 #[test]

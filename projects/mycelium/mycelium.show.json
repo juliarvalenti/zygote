@@ -1,0 +1,23 @@
+{
+  "cues": [
+    { "id": 1, "time": 0.0, "label": "Cue 1", "transition": "cut", "values": { "net.growth": 1.0, "net.flow": 1.0, "net.flow_gain": 0.2 } },
+    { "id": 2, "time": 10.0, "label": "Cue 2", "transition": "interpolate", "values": { "net.growth": 1.8, "net.flow": 1.6, "net.flow_gain": 0.35 } }
+  ],
+  "duration": 20.0,
+  "looping": true,
+  "modulation": {
+    "sources": [
+      { "id": "lfo1", "kind": "lfo", "rate_hz": 0.05, "phase": 0.0, "shape": "sine" },
+      { "id": "lfo2", "kind": "lfo", "rate_hz": 0.11, "phase": 0.25, "shape": "triangle" },
+      { "id": "env1", "kind": "envelope", "adsr": { "attack": 0.05, "decay": 0.6, "sustain": 0.4, "release": 1.5 }, "trigger": "env1" }
+    ],
+    "assignments": [
+      { "target": "net.growth", "source": "lfo1", "depth": 0.7 },
+      { "target": "net.flow", "source": "lfo2", "depth": 0.8 },
+      { "target": "net.sensor_angle", "source": "lfo1", "depth": 0.25 },
+      { "target": "net.flow_gain", "source": "env1", "depth": 0.6 }
+    ]
+  },
+  "keys": { "q": { "action": "trigger", "trigger": "env1" } },
+  "next_id": 3
+}

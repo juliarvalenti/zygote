@@ -11754,6 +11754,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygote-mycelium"
+version = "0.1.0"
+dependencies = [
+ "zygote-render",
+]
+
+[[package]]
 name = "zygote-render"
 version = "0.1.0"
 dependencies = [

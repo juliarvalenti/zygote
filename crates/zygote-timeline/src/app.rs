@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -11,10 +11,16 @@ use gpui_kit::component::{ActiveTheme, Disableable, Root, Sizable, h_flex, v_fle
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use zygote_core::{
-    DEFAULT_PORT, Graph, GraphStructure, Message, NodeId, NodeLibrary, PROTOCOL_VERSION,
-    ParamDescriptor, ParamPath, ParamSender, ParamType, ParamValue, Timeline, Transition,
-    WindowBounds as OutputBounds,
+    DEFAULT_PORT, GateEvent, GateLog, Graph, GraphStructure, KeyAction, LfoShape, Message,
+    ModContext, ModSource, NodeId, NodeLibrary, PROTOCOL_VERSION, ParamDescriptor, ParamPath,
+    ParamSender, ParamType, ParamValue, SourceKind, Timeline, Transition,
+    WindowBounds as OutputBounds, apply_offset,
 };
+
+/// Keys owned by the transport; key learn refuses them.
+const RESERVED_KEYS: &[&str] = &[
+    "space", "escape", "home", "[", "]", "enter", "l", "e", "t", "shift-t",
+];
 
 /// UI refresh / send rate.
 const TICK: Duration = Duration::from_millis(33);
@@ -142,6 +148,13 @@ enum Drag {
 }
 
 /// What moving a control means right now.
+/// What the next key press will be bound to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LearnTarget {
+    Trigger(String),
+    Cue(u32),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     /// Stopped and parked on a cue: controls write into that cue.
@@ -186,6 +199,17 @@ pub struct TimelineApp {
     /// fresh one once the renderer describes a graph it does not fit.
     timeline_is_default: bool,
     status: String,
+    /// Gate events, mirrored to the renderer; envelopes are evaluated from it.
+    gates: GateLog,
+    /// The modulation setup changed and must be re-sent.
+    mod_dirty: bool,
+    /// Parameter whose assignment editor is open.
+    mod_editor: Option<ParamPath>,
+    depth_slider: Option<(ParamPath, Entity<SliderState>, Subscription)>,
+    /// Per-source parameter sliders (rate/phase or A/D/S/R).
+    source_sliders: BTreeMap<String, (Vec<Entity<SliderState>>, Vec<Subscription>)>,
+    learning: Option<LearnTarget>,
+    held_keys: BTreeSet<String>,
 }
 
 impl TimelineApp {
@@ -248,7 +272,15 @@ impl TimelineApp {
             tiled: false,
             timeline_is_default,
             status,
+            gates: GateLog::default(),
+            mod_dirty: true,
+            mod_editor: None,
+            depth_slider: None,
+            source_sliders: BTreeMap::new(),
+            learning: None,
+            held_keys: BTreeSet::new(),
         };
+        this.ensure_source_sliders(cx);
         this.selected = this.timeline.cues.first().map(|c| c.id);
         if let Some(cue) = this.selected.and_then(|id| this.timeline.cue(id)) {
             this.playhead = cue.time;
@@ -277,6 +309,298 @@ impl TimelineApp {
         match self.selected.and_then(|id| self.timeline.cue(id)) {
             Some(cue) if (cue.time - self.playhead).abs() < 1e-3 => Mode::Edit(cue.id),
             _ => Mode::Live,
+        }
+    }
+
+    // ---- modulation -------------------------------------------------------
+
+    fn mod_ctx(&self) -> ModContext {
+        ModContext {
+            time: self.playhead,
+            ..Default::default()
+        }
+    }
+
+    /// Offsets the renderer is adding right now, computed from the same
+    /// definition and clock so the ghost markers match the picture.
+    fn offsets(&self) -> Vec<(ParamPath, f32)> {
+        self.timeline
+            .modulation
+            .offsets(&self.mod_ctx(), &self.gates)
+    }
+
+    fn send_modulation(&mut self) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(&Message::Modulation {
+                modulation: self.timeline.modulation.clone(),
+            });
+        }
+        self.mod_dirty = false;
+    }
+
+    fn resend_gates(&self) {
+        let Some(sender) = &self.sender else { return };
+        for event in self.gates.events() {
+            let _ = sender.send(&Message::Gate {
+                event: event.clone(),
+            });
+        }
+    }
+
+    fn gate(&mut self, trigger: &str, on: bool, cx: &mut Context<Self>) {
+        let event = GateEvent {
+            trigger: trigger.to_owned(),
+            on,
+            time: self.playhead,
+        };
+        self.gates.push(event.clone());
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(&Message::Gate { event });
+        }
+        cx.notify();
+    }
+
+    fn add_source(&mut self, envelope: bool, cx: &mut Context<Self>) {
+        let source = if envelope {
+            let id = self.timeline.modulation.next_id("env");
+            let trigger = id.clone();
+            ModSource::envelope(&id, &trigger)
+        } else {
+            let id = self.timeline.modulation.next_id("lfo");
+            ModSource::lfo(&id, 0.25, LfoShape::Sine)
+        };
+        self.timeline.modulation.sources.push(source);
+        self.ensure_source_sliders(cx);
+        self.mod_dirty = true;
+        cx.notify();
+    }
+
+    fn remove_source(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.timeline.modulation.remove_source(id);
+        self.source_sliders.remove(id);
+        let trigger_keys: Vec<String> = self
+            .timeline
+            .keys
+            .iter()
+            .filter(|(_, a)| matches!(a, KeyAction::Trigger { trigger } if trigger == id))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in trigger_keys {
+            self.timeline.keys.remove(&k);
+        }
+        self.mod_dirty = true;
+        cx.notify();
+    }
+
+    fn set_shape(&mut self, id: &str, shape: LfoShape, cx: &mut Context<Self>) {
+        if let Some(source) = self.timeline.modulation.source_mut(id)
+            && let SourceKind::Lfo { shape: s, .. } = &mut source.kind
+        {
+            *s = shape;
+            self.mod_dirty = true;
+        }
+        cx.notify();
+    }
+
+    /// Sliders for every source that lacks them: LFO `[rate, phase]`,
+    /// envelope `[attack, decay, sustain, release]`.
+    fn ensure_source_sliders(&mut self, cx: &mut Context<Self>) {
+        let sources = self.timeline.modulation.sources.clone();
+        for source in sources {
+            if self.source_sliders.contains_key(&source.id) {
+                continue;
+            }
+            let specs: Vec<(f32, f32, f32)> = match &source.kind {
+                SourceKind::Lfo { rate_hz, phase, .. } => {
+                    vec![(0.02, 4.0, *rate_hz), (0.0, 1.0, *phase)]
+                }
+                SourceKind::Envelope { adsr, .. } => vec![
+                    (0.0, 2.0, adsr.attack),
+                    (0.0, 3.0, adsr.decay),
+                    (0.0, 1.0, adsr.sustain),
+                    (0.0, 4.0, adsr.release),
+                ],
+                _ => Vec::new(),
+            };
+            let mut sliders = Vec::new();
+            let mut subs = Vec::new();
+            for (index, (min, max, value)) in specs.into_iter().enumerate() {
+                let slider = cx.new(|_| {
+                    SliderState::new()
+                        .min(min)
+                        .max(max)
+                        .step((max - min) / 400.0)
+                        .default_value(value)
+                });
+                let id = source.id.clone();
+                subs.push(
+                    cx.subscribe(&slider, move |this, _, event: &SliderEvent, cx| {
+                        if let SliderEvent::Change(v) = event {
+                            this.set_source_field(&id, index, v.start(), cx);
+                        }
+                    }),
+                );
+                sliders.push(slider);
+            }
+            self.source_sliders
+                .insert(source.id.clone(), (sliders, subs));
+        }
+    }
+
+    fn set_source_field(&mut self, id: &str, index: usize, value: f32, cx: &mut Context<Self>) {
+        if let Some(source) = self.timeline.modulation.source_mut(id) {
+            match &mut source.kind {
+                SourceKind::Lfo { rate_hz, phase, .. } => match index {
+                    0 => *rate_hz = value,
+                    _ => *phase = value,
+                },
+                SourceKind::Envelope { adsr, .. } => match index {
+                    0 => adsr.attack = value,
+                    1 => adsr.decay = value,
+                    2 => adsr.sustain = value,
+                    _ => adsr.release = value,
+                },
+                _ => {}
+            }
+            self.mod_dirty = true;
+        }
+        cx.notify();
+    }
+
+    /// Bipolar depth range for a parameter: its whole span either way.
+    fn depth_span(desc: &ParamDescriptor) -> Option<f32> {
+        match &desc.ty {
+            ParamType::Float { min, max } => Some((max - min).abs().max(1e-6)),
+            ParamType::Int { min, max } => Some(((max - min).abs() as f32).max(1.0)),
+            _ => None,
+        }
+    }
+
+    fn toggle_mod_editor(&mut self, path: &ParamPath, cx: &mut Context<Self>) {
+        if self.mod_editor.as_ref() == Some(path) {
+            self.mod_editor = None;
+            self.depth_slider = None;
+            cx.notify();
+            return;
+        }
+        let Some(desc) = self
+            .params
+            .iter()
+            .find(|c| &c.desc.path == path)
+            .map(|c| c.desc.clone())
+        else {
+            return;
+        };
+        let Some(span) = Self::depth_span(&desc) else {
+            return;
+        };
+        let depth = self
+            .timeline
+            .modulation
+            .assignment(path)
+            .map(|a| a.depth)
+            .unwrap_or(0.0);
+        let slider = cx.new(|_| {
+            SliderState::new()
+                .min(-span)
+                .max(span)
+                .step(span / 250.0)
+                .default_value(depth)
+        });
+        let p = path.clone();
+        let sub = cx.subscribe(&slider, move |this, _, event: &SliderEvent, cx| {
+            if let SliderEvent::Change(v) = event {
+                this.set_depth(&p, v.start(), cx);
+            }
+        });
+        self.depth_slider = Some((path.clone(), slider, sub));
+        self.mod_editor = Some(path.clone());
+        cx.notify();
+    }
+
+    fn set_depth(&mut self, path: &ParamPath, depth: f32, cx: &mut Context<Self>) {
+        let source = self
+            .timeline
+            .modulation
+            .assignment(path)
+            .map(|a| a.source.clone())
+            .or_else(|| {
+                self.timeline
+                    .modulation
+                    .sources
+                    .first()
+                    .map(|s| s.id.clone())
+            });
+        if let Some(source) = source {
+            self.timeline.modulation.assign(path, Some(&source), depth);
+            self.mod_dirty = true;
+        }
+        cx.notify();
+    }
+
+    fn assign_source(&mut self, path: &ParamPath, source: Option<String>, cx: &mut Context<Self>) {
+        let existing = self.timeline.modulation.assignment(path).map(|a| a.depth);
+        let depth = existing.unwrap_or_else(|| {
+            self.params
+                .iter()
+                .find(|c| &c.desc.path == path)
+                .and_then(|c| Self::depth_span(&c.desc))
+                .map(|span| span * 0.25)
+                .unwrap_or(0.0)
+        });
+        self.timeline
+            .modulation
+            .assign(path, source.as_deref(), depth);
+        self.mod_dirty = true;
+        cx.notify();
+    }
+
+    fn key_for_action(&self, wanted: &KeyAction) -> Option<&str> {
+        self.timeline
+            .keys
+            .iter()
+            .find(|(_, a)| *a == wanted)
+            .map(|(k, _)| k.as_str())
+    }
+
+    fn key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let name = ev.keystroke.unparse();
+        if let Some(target) = self.learning.take() {
+            if RESERVED_KEYS.contains(&name.as_str()) {
+                self.status = format!("`{name}` is a transport key; pick another");
+                self.learning = Some(target);
+            } else {
+                let action = match &target {
+                    LearnTarget::Trigger(t) => KeyAction::Trigger { trigger: t.clone() },
+                    LearnTarget::Cue(id) => KeyAction::Cue { id: *id },
+                };
+                self.timeline.keys.retain(|_, a| a != &action);
+                self.timeline.keys.insert(name.clone(), action);
+                self.status = format!("bound `{name}`");
+            }
+            cx.notify();
+            return;
+        }
+        if ev.is_held || self.held_keys.contains(&name) {
+            return;
+        }
+        let Some(action) = self.timeline.keys.get(&name).cloned() else {
+            return;
+        };
+        self.held_keys.insert(name);
+        match action {
+            KeyAction::Trigger { trigger } => self.gate(&trigger, true, cx),
+            KeyAction::Cue { id } => self.go_to_cue(id, window, cx),
+        }
+    }
+
+    fn key_up(&mut self, ev: &KeyUpEvent, cx: &mut Context<Self>) {
+        let name = ev.keystroke.unparse();
+        if !self.held_keys.remove(&name) {
+            return;
+        }
+        if let Some(KeyAction::Trigger { trigger }) = self.timeline.keys.get(&name).cloned() {
+            self.gate(&trigger, false, cx);
         }
     }
 
@@ -524,6 +848,9 @@ impl TimelineApp {
             self.sync_sliders(window, cx);
         }
         self.push_values();
+        if self.mod_dirty {
+            self.send_modulation();
+        }
         // The renderer's clock follows this. Paused → frozen picture.
         if let Some(sender) = &self.sender {
             let _ = sender.send(&Message::Transport {
@@ -629,6 +956,8 @@ impl TimelineApp {
             }
             self.sent.clear();
             self.push_values();
+            self.send_modulation();
+            self.resend_gates();
         } else if !self.described
             && self.params.is_empty()
             && self.started.elapsed() > DESCRIBE_TIMEOUT
@@ -799,6 +1128,9 @@ impl TimelineApp {
         {
             Ok(timeline) => {
                 self.timeline = timeline;
+                self.source_sliders.clear();
+                self.ensure_source_sliders(cx);
+                self.mod_dirty = true;
                 self.selected = self.timeline.cues.first().map(|c| c.id);
                 self.status = format!("loaded {}", self.file.display());
                 self.seek(self.playhead, window, cx);
@@ -1048,6 +1380,7 @@ impl TimelineApp {
                 );
             }
         }
+        rail = rail.child(self.render_rack(cx));
         rail = rail.child(div().flex_1());
         rail = rail.child(
             Button::new("toggle-graph")
@@ -1064,6 +1397,249 @@ impl TimelineApp {
                 })),
         );
         rail.into_any_element()
+    }
+
+    /// Shared modulation sources with live meters.
+    fn render_rack(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let ctx = self.mod_ctx();
+        let mut rack = v_flex()
+            .gap_2()
+            .pt_3()
+            .mt_2()
+            .border_t_1()
+            .border_color(theme.border);
+        rack = rack.child(
+            h_flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .flex_1()
+                        .child("MODULATION"),
+                )
+                .child(
+                    Button::new("add-lfo")
+                        .xsmall()
+                        .label("+ LFO")
+                        .on_click(cx.listener(|this, _, _, cx| this.add_source(false, cx))),
+                )
+                .child(
+                    Button::new("add-env")
+                        .xsmall()
+                        .label("+ ENV")
+                        .on_click(cx.listener(|this, _, _, cx| this.add_source(true, cx))),
+                ),
+        );
+        for (i, source) in self.timeline.modulation.sources.iter().enumerate() {
+            let value = source.sample(&ctx, &self.gates);
+            let (frac, bipolar) = match source.kind {
+                SourceKind::Lfo { .. } => ((value + 1.0) * 0.5, true),
+                _ => (value, false),
+            };
+            let id = source.id.clone();
+            let uses = self
+                .timeline
+                .modulation
+                .assignments
+                .iter()
+                .filter(|a| a.source == source.id)
+                .count();
+            let mut card = v_flex()
+                .gap_1()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.muted.opacity(0.25));
+            let remove_id = id.clone();
+            card = card.child(
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .flex_1()
+                            .truncate()
+                            .text_color(theme.foreground)
+                            .child(source.id.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(format!("{uses}×")),
+                    )
+                    .child(Button::new(("rm-source", i)).xsmall().label("✕").on_click(
+                        cx.listener(move |this, _, _, cx| this.remove_source(&remove_id, cx)),
+                    )),
+            );
+            // Live meter.
+            card = card.child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(6.))
+                    .rounded_sm()
+                    .bg(theme.muted)
+                    .when(bipolar, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(relative(0.5))
+                                .w(px(1.))
+                                .bg(theme.border),
+                        )
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(-2.))
+                            .left(relative(frac.clamp(0.0, 1.0)))
+                            .ml(px(-3.))
+                            .w(px(6.))
+                            .h(px(10.))
+                            .rounded_sm()
+                            .bg(theme.primary),
+                    ),
+            );
+            let sliders = self
+                .source_sliders
+                .get(&source.id)
+                .map(|(s, _)| s.clone())
+                .unwrap_or_default();
+            match &source.kind {
+                SourceKind::Lfo { shape, .. } => {
+                    let mut shapes = h_flex().gap_1();
+                    for (j, candidate) in LfoShape::ALL.iter().enumerate() {
+                        let id = id.clone();
+                        let c = *candidate;
+                        shapes = shapes.child(
+                            Button::new(("shape", (i * 8 + j) as u64))
+                                .xsmall()
+                                .label(c.label())
+                                .when(*shape == c, |b| b.primary())
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.set_shape(&id, c, cx)),
+                                ),
+                        );
+                    }
+                    card = card.child(shapes);
+                    for (slider, name) in sliders.iter().zip(["rate", "phase"]) {
+                        card = card.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .w(px(36.))
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(name),
+                                )
+                                .child(Slider::new(slider).flex_1()),
+                        );
+                    }
+                }
+                SourceKind::Envelope { trigger, .. } => {
+                    let bound = self
+                        .key_for_action(&KeyAction::Trigger {
+                            trigger: trigger.clone(),
+                        })
+                        .map(|k| format!("key `{k}`"))
+                        .unwrap_or_else(|| "no key".to_owned());
+                    let learning = self.learning == Some(LearnTarget::Trigger(trigger.clone()));
+                    let t_learn = trigger.clone();
+                    let t_down = trigger.clone();
+                    let t_up = trigger.clone();
+                    card = card.child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_color(theme.muted_foreground)
+                                    .child(bound),
+                            )
+                            .child(
+                                Button::new(("learn", i))
+                                    .xsmall()
+                                    .label(if learning { "press a key…" } else { "Learn" })
+                                    .when(learning, |b| b.primary())
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.learning = Some(LearnTarget::Trigger(t_learn.clone()));
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(("fire", i))
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .child("hold")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.gate(&t_down, true, cx)
+                                        }),
+                                    )
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.gate(&t_up, false, cx)
+                                        }),
+                                    ),
+                            ),
+                    );
+                    for (slider, name) in sliders.iter().zip(["A", "D", "S", "R"]) {
+                        card = card.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .w(px(36.))
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(name),
+                                )
+                                .child(Slider::new(slider).flex_1()),
+                        );
+                    }
+                }
+                _ => {
+                    card = card.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(source.label()),
+                    );
+                }
+            }
+            rack = rack.child(card);
+        }
+        if self.timeline.modulation.sources.is_empty() {
+            rack = rack.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("no sources yet · add an LFO or an envelope, then assign it from a parameter's `mod` chip"),
+            );
+        }
+        rack.into_any_element()
     }
 
     fn render_transport(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1215,6 +1791,30 @@ impl TimelineApp {
                     .label("Delete cue")
                     .disabled(selected.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
+            )
+            .child(
+                Button::new("learn-cue-key")
+                    .small()
+                    .label(match selected {
+                        Some(cue) => match (
+                            &self.learning,
+                            self.key_for_action(&KeyAction::Cue { id: cue.id }),
+                        ) {
+                            (Some(LearnTarget::Cue(id)), _) if *id == cue.id => {
+                                "press a key…".to_owned()
+                            }
+                            (_, Some(k)) => format!("Cue key: {k}"),
+                            _ => "Learn cue key".to_owned(),
+                        },
+                        None => "Learn cue key".to_owned(),
+                    })
+                    .disabled(selected.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(id) = this.selected {
+                            this.learning = Some(LearnTarget::Cue(id));
+                            cx.notify();
+                        }
+                    })),
             )
             .child(div().flex_1())
             .child(
@@ -1730,6 +2330,7 @@ impl TimelineApp {
     fn render_params(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let values = self.effective_values();
+        let offsets = self.offsets();
         let mode = self.mode();
         let mut list = v_flex().gap_1().w_full();
         if self.params.is_empty() {
@@ -1868,15 +2469,55 @@ impl TimelineApp {
                     }
                     row.into_any_element()
                 }
-                (ParamType::Float { .. } | ParamType::Int { .. }, _) => {
+                (ParamType::Float { .. } | ParamType::Int { .. }, v) => {
                     match control.sliders.first() {
-                        Some(slider) => Slider::new(slider).flex_1().into_any_element(),
+                        Some(slider) => {
+                            // Ghost marker: where the value actually is once modulation is added.
+                            let ghost = offsets
+                                .iter()
+                                .find(|(p, _)| p == &path)
+                                .map(|(_, offset)| {
+                                    control.desc.ty.conform(&apply_offset(v, *offset))
+                                })
+                                .and_then(|g| {
+                                    let (min, max) = match &control.desc.ty {
+                                        ParamType::Float { min, max } => (*min, *max),
+                                        ParamType::Int { min, max } => (*min as f32, *max as f32),
+                                        _ => (0.0, 1.0),
+                                    };
+                                    g.as_float().map(|g| {
+                                        ((g - min) / (max - min).max(1e-6)).clamp(0.0, 1.0)
+                                    })
+                                });
+                            div()
+                                .relative()
+                                .flex_1()
+                                .child(Slider::new(slider).w_full())
+                                .when_some(ghost, |d, frac| {
+                                    d.child(
+                                        div()
+                                            .absolute()
+                                            .top(px(-3.))
+                                            .left(relative(frac))
+                                            .ml(px(-1.))
+                                            .w(px(2.))
+                                            .h(px(22.))
+                                            .rounded_sm()
+                                            .bg(theme.primary.opacity(0.8)),
+                                    )
+                                })
+                                .into_any_element()
+                        }
                         None => div().into_any_element(),
                     }
                 }
             };
 
             let reset_path = path.clone();
+            let assignment = self.timeline.modulation.assignment(&path).cloned();
+            let modulatable = Self::depth_span(&control.desc).is_some();
+            let editor_open = self.mod_editor.as_ref() == Some(&path);
+            let chip_path = path.clone();
             list = list.child(
                 h_flex()
                     .id(("param-row", i))
@@ -1914,6 +2555,19 @@ impl TimelineApp {
                             .child(value.to_string()),
                     )
                     .child(
+                        Button::new(("mod", i))
+                            .xsmall()
+                            .label(match &assignment {
+                                Some(a) => format!("{} ±{:.2}", a.source, a.depth.abs()),
+                                None => "mod".to_owned(),
+                            })
+                            .when(assignment.is_some() || editor_open, |b| b.primary())
+                            .disabled(!modulatable)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_mod_editor(&chip_path, cx)
+                            })),
+                    )
+                    .child(
                         Button::new(("release", i))
                             .xsmall()
                             .label(if overridden {
@@ -1929,6 +2583,71 @@ impl TimelineApp {
                             })),
                     ),
             );
+
+            if editor_open {
+                let mut sources = h_flex().gap_1().items_center().flex_wrap();
+                let none_path = control.desc.path.clone();
+                sources = sources.child(
+                    Button::new(("mod-none", i))
+                        .xsmall()
+                        .label("none")
+                        .when(assignment.is_none(), |b| b.primary())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.assign_source(&none_path, None, cx)
+                        })),
+                );
+                for (j, source) in self.timeline.modulation.sources.iter().enumerate() {
+                    let sp = control.desc.path.clone();
+                    let sid = source.id.clone();
+                    let selected = assignment.as_ref().is_some_and(|a| a.source == source.id);
+                    sources = sources.child(
+                        Button::new(("mod-src", (i * 64 + j) as u64))
+                            .xsmall()
+                            .label(source.id.clone())
+                            .when(selected, |b| b.primary())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.assign_source(&sp, Some(sid.clone()), cx)
+                            })),
+                    );
+                }
+                if self.timeline.modulation.sources.is_empty() {
+                    sources = sources.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("add an LFO or envelope in the rail first"),
+                    );
+                }
+                let mut editor = h_flex()
+                    .gap_2()
+                    .items_center()
+                    .ml(px(190.))
+                    .mr_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(theme.primary.opacity(0.06))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("source"),
+                    )
+                    .child(sources);
+                if let Some((p, slider, _)) = &self.depth_slider
+                    && p == &control.desc.path
+                {
+                    editor = editor
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("depth ±"),
+                        )
+                        .child(Slider::new(slider).flex_1().min_w(px(160.)));
+                }
+                list = list.child(editor);
+            }
         }
         list.into_any_element()
     }
@@ -2001,7 +2720,11 @@ impl Render for TimelineApp {
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|this, _: &Stop, window, cx| {
-                this.stop(window, cx);
+                if this.learning.take().is_some() {
+                    cx.notify();
+                } else {
+                    this.stop(window, cx);
+                }
                 cx.stop_propagation();
             }))
             .capture_action(cx.listener(|this, _: &GoToStart, window, cx| {
@@ -2038,6 +2761,10 @@ impl Render for TimelineApp {
                 this.release_output(cx);
                 cx.stop_propagation();
             }))
+            .on_key_down(
+                cx.listener(|this, ev: &KeyDownEvent, window, cx| this.key_down(ev, window, cx)),
+            )
+            .on_key_up(cx.listener(|this, ev: &KeyUpEvent, _, cx| this.key_up(ev, cx)))
             .size_full()
             .bg(background)
             .text_color(foreground)
@@ -2053,7 +2780,20 @@ impl Render for TimelineApp {
                     .child(rail)
                     .child(main),
             )
-            .child(div().text_xs().text_color(muted).child(self.status.clone()))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(match &self.learning {
+                        Some(LearnTarget::Trigger(t)) => {
+                            format!("press a key to bind trigger `{t}` · esc cancels")
+                        }
+                        Some(LearnTarget::Cue(id)) => {
+                            format!("press a key to bind cue {id} · esc cancels")
+                        }
+                        None => self.status.clone(),
+                    }),
+            )
     }
 }
 

@@ -98,6 +98,15 @@ pub fn poll(
                     }
                 }
             }
+            Message::Modulation { modulation } => {
+                debug!(
+                    "modulation: {} sources, {} assignments",
+                    modulation.sources.len(),
+                    modulation.assignments.len()
+                );
+                state.modulation = modulation;
+            }
+            Message::Gate { event } => state.gates.push(event),
             Message::Ping => {
                 if let Err(e) = net.0.send_to(&Message::pong(), from) {
                     debug!("failed to answer ping from {from}: {e}");

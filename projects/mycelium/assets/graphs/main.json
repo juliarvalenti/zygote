@@ -1,0 +1,9 @@
+{
+  "name": "mycelium",
+  "nodes": [
+    { "id": "net", "type": "mycelium" },
+    { "id": "glow", "type": "feedback", "inputs": ["net"], "params": { "decay": 0.6, "zoom": 1.0, "rotate": 0.0, "hue_shift": 0.0, "mix": 0.5 } },
+    { "id": "grade", "type": "color_grade", "inputs": ["glow"], "params": { "saturation": 1.15 } }
+  ],
+  "output": "grade"
+}

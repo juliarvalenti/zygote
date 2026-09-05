@@ -21,15 +21,18 @@ own nodes in Rust or WGSL.
 | `crates/zygote-timeline` | gpui-kit window: graph view, transport, cue axis, typed controls per parameter. Knows nothing about shaders. |
 | `projects/demo` | A project consuming the engine: one Rust-declared node, one WGSL-file node, its own graph and assets. |
 | `projects/haze` | Proof-of-concept show: monochrome pulsing geometry and noise haze from a central point, three WGSL nodes. |
+| `projects/mycelium` | A CPU simulation source (tip-growth network traced by nutrient agents) with LFOs and an envelope on its parameters. |
 
-| `projects/haze` | `projects/demo` (kaleido + scanlines are project nodes) | timeline UI |
+| `projects/haze` | `projects/mycelium` | timeline UI with the modulation rack |
 | --- | --- | --- |
-| ![](docs/render-haze.png) | ![](docs/render-demo.png) | ![](docs/timeline-ui.png) |
+| ![](docs/render-haze.png) | ![](docs/render-mycelium.png) | ![](docs/timeline-ui.png) |
 
 ## Running
 
 ```sh
 cargo run --release -p zygote-haze        # monochrome proof of concept
+cargo run --release -p zygote-mycelium    # CPU simulation source with LFOs
+cargo run --release -p zygote-timeline -- projects/mycelium/mycelium.show.json
 cargo run --release -p zygote-demo        # a project: image → warp → kaleido → feedback → scanlines
 cargo run --release -p zygote-timeline    # the UI; connects to udp://127.0.0.1:9471
 cargo run --release -p zygote -- --showcase   # stock renderer, builtin nodes only
@@ -58,6 +61,20 @@ jump cuts. Double-click any parameter row to reset it to its default.
 play/pause, `esc` stop, `home` to zero, `[` `]` cues, `⏎` add cue, `e`
 force live, `l` loop, `t` tile the output window next to the UI, `shift-t`
 pop it back out.
+
+**Modulation.** Shared sources live in the rail's rack: LFOs (shape, rate,
+phase) and ADSR envelopes driven by a named trigger. Each float or int
+parameter row has a `mod` chip: pick a source and a bipolar depth, and the
+source's value times depth is *added* to the resolved value, so the slider
+always means the centre and depth 0 is exactly the slider. A dark ghost mark
+on the slider shows where the value actually is. Sources run on the
+transport clock: pausing freezes them, scrubbing rewinds them, and the UI
+and renderer evaluate the same definition so they agree. Envelopes are a
+pure function of the gate log, so a key pressed while paused does nothing
+until play. **Key learn:** press `Learn` on an envelope (or `Learn cue key`
+on a cue), then a key; holding the key gates the envelope. Transport keys
+are refused. Modulation and key bindings are saved in the show file next to
+the cues.
 
 Renderer options: `[graph.json] [--port N] [--size WxH] [--assets DIR]
 [--nodes DIR] [--showcase] [--free-run] [--capture out.png [--frames N]
@@ -89,7 +106,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 ```
 
-**A Rust type**, when you want typed access or to ship the node in a crate:
+**A Rust type**, when you want typed access or to ship the node in a crate
+(the same declaration with a `RustSource` impl instead makes a CPU texture
+source: Zygote calls `update(&params, &frame, &mut pixels)` every frame and
+uploads the result, which is how `projects/mycelium` runs its simulation):
 
 ```rust
 use zygote_render::prelude::*;
@@ -172,12 +192,14 @@ Modulators: `time`, `lfo` (sine/triangle/saw/square), `audio_band {band}` and
   key carries the node's generated shader, so one material type renders every
   node kind. The window shows the output on a quad in a perspective 3D scene.
 - **Resolution order** (`zygote_core::resolve_params`): graph base value →
-  cue → manual override, plus float modulators, conformed to the type.
+  cue → manual override, plus modulation offsets on floats and ints,
+  conformed to the type.
 - **Protocol v2.** JSON per UDP datagram, version field in every renderer
   message: `hello`, `structure` (UI-facing graph summary), `describe`
   (typed parameter descriptors), `set_param(s)`, `clear_param`, `clear_all`,
   `transport` (drives the renderer's clock), `arrange` (places the output
-  window), `ping`/`pong`.
+  window), `modulation` (the show's sources and assignments), `gate`
+  (trigger on/off at transport time), `ping`/`pong`.
 - **Projects** are workspace members depending on `zygote-render` by path.
   Version pinning and a project template are deferred until a project needs
   to stop moving with the engine.
@@ -205,4 +227,6 @@ xvfb-run -a -s "-screen 0 1280x720x24" env WGPU_BACKEND=vulkan \
 - Runtime graph editing from the UI; graphs are files the agent edits.
 - Compute passes and multi-pass nodes; the vocabulary grows when an effect needs them.
 - In-UI preview of the output (the output window tiles next to the UI instead).
-- Key learn for binding keys to cues and controls.
+- Key learn for toggling bools or momentary values (cues and envelope triggers are bindable).
+- Cue-able modulation depth and LFO rate.
+- MIDI and audio-onset triggers.
