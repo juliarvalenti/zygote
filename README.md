@@ -78,8 +78,12 @@ the cues.
 
 Renderer options: `[graph.json] [--port N] [--size WxH] [--assets DIR]
 [--nodes DIR] [--showcase] [--free-run] [--capture out.png [--frames N]
-[--every K]]` (`--every` saves a numbered frame sequence). Renderer keys:
-`S` screenshot, `Esc` quit.
+[--every K]]` (`--every` saves a numbered frame sequence).
+
+**Output window navigation.** The output is a quad in a 3D scene, so you can
+move around it: wheel dollies in and out, left-drag pans, right-drag (or
+middle-drag) orbits, arrow keys pan, `+`/`-` dolly, `Home` or `0` resets to
+the flat full-frame view. `S` saves a screenshot, `Esc` quits.
 
 ## What a node is
 
