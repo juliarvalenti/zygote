@@ -2,16 +2,16 @@
 
 use std::path::PathBuf;
 
-use bevy::camera::{Hdr, PerspectiveProjection, Projection};
-use bevy::core_pipeline::tonemapping::Tonemapping;
-use nannou::prelude::*;
+use bevy::log::LogPlugin;
+use bevy::prelude::*;
+use bevy::window::{ExitCondition, WindowPlugin};
 use zygote_core::{CpuSourceInfo, Graph, InputDef, NodeDef, NodeLibrary, NodeOrigin, NodeParams};
 
 use crate::sources::{FrameInfo, SourceFactories, SourceFactory};
 
 use crate::capture::{CapturePlugin, CaptureSettings};
+use crate::output_window::OutputWindowPlugin;
 use crate::plugin::{RenderSettings, ZygotePlugin};
-use crate::{CAMERA_DISTANCE, CAMERA_FOV};
 
 /// Declaration of one texture input of a [`RustNode`].
 #[derive(Clone, Copy, Debug)]
@@ -351,13 +351,38 @@ impl ZygoteApp {
             ));
         }
 
-        let mut builder = nannou::app(model)
-            .update(update)
-            .add_plugin(ZygotePlugin::new(self.settings, self.library, self.sources));
+        // Bevy app with nannou as a plugin. Building it ourselves (instead of
+        // through nannou's builder) lets the window survive losing its monitor
+        // and lets us pick the log filter.
+        let mut app = App::new();
+        app.add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    // The output window is spawned by `OutputWindowPlugin`, which
+                    // also re-creates it if it disappears. Never exit on window loss:
+                    // a blinking projector cable must not end the show.
+                    primary_window: None,
+                    exit_condition: ExitCondition::DontExit,
+                    ..Default::default()
+                })
+                .set(LogPlugin {
+                    // `bevy_time` warns once at startup that the render world has not
+                    // reported time yet; harmless and noisy, so it is filtered out.
+                    filter:
+                        "wgpu=error,naga=warn,bevy_time=error,bevy_render=info,zygote_render=info"
+                            .into(),
+                    ..Default::default()
+                }),
+        );
+        app.add_plugins((
+            nannou::NannouPlugin,
+            OutputWindowPlugin,
+            ZygotePlugin::new(self.settings, self.library, self.sources),
+        ));
         if let Some(capture) = self.capture {
-            builder = builder.add_plugin(CapturePlugin(capture));
+            app.add_plugins(CapturePlugin(capture));
         }
-        builder.run();
+        app.run();
     }
 }
 
@@ -389,61 +414,4 @@ fn resolve_asset_root(explicit: Option<PathBuf>) -> PathBuf {
     // SAFETY: called from `run` before any other thread exists.
     unsafe { std::env::set_var("BEVY_ASSET_ROOT", &root) };
     root
-}
-
-struct Model {
-    _window: Entity,
-}
-
-fn model(app: &App) -> Model {
-    // 3D from the start: a perspective camera with a depth buffer looking down
-    // -Z at the display quad spawned by `scene::spawn_display`.
-    let camera = app
-        .new_camera()
-        .projection(Projection::Perspective(PerspectiveProjection {
-            fov: CAMERA_FOV,
-            near: 0.05,
-            far: 100.0,
-            ..Default::default()
-        }))
-        .xyz(Vec3::new(0.0, 0.0, CAMERA_DISTANCE))
-        .tonemapping(Tonemapping::None)
-        .clear_color(ClearColorConfig::Custom(Color::BLACK))
-        .build();
-    app.command_scope(|mut commands| {
-        commands.entity(camera).insert(Hdr);
-    });
-
-    let window = app
-        .new_window()
-        .window(bevy::window::Window {
-            title: "Zygote".to_owned(),
-            ..Default::default()
-        })
-        .camera(camera)
-        .primary()
-        .key_pressed(key_pressed)
-        .build();
-
-    Model { _window: window }
-}
-
-fn update(_app: &App, _model: &mut Model) {}
-
-fn key_pressed(app: &App, _model: &mut Model, key: KeyCode) {
-    match key {
-        KeyCode::KeyS => {
-            let path = format!(
-                "zygote-{}.png",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0)
-            );
-            info!("saving screenshot to {path}");
-            app.main_window().save_screenshot(path);
-        }
-        KeyCode::Escape => app.quit(),
-        _ => {}
-    }
 }

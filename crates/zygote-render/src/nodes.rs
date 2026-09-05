@@ -392,6 +392,35 @@ pub fn build_runtime(
     commands.insert_resource(runtime);
 }
 
+/// Swap in the missing-texture checker for image nodes whose asset failed to
+/// load after all (decode errors, unsupported formats), and say so once.
+pub fn watch_image_loads(
+    mut runtime: ResMut<Runtime>,
+    asset_server: Res<AssetServer>,
+    fallbacks: Res<Fallbacks>,
+    mut reported: Local<std::collections::HashSet<NodeId>>,
+) {
+    for node in runtime.nodes.iter_mut() {
+        let NodeKind::Image { path } = &node.kind else {
+            continue;
+        };
+        let Output::Single(handle) = &node.output else {
+            continue;
+        };
+        if *handle == fallbacks.missing || reported.contains(&node.id) {
+            continue;
+        }
+        if let bevy::asset::LoadState::Failed(err) = asset_server.load_state(handle.id()) {
+            error!(
+                "node `{}`: image `{path}` failed to load: {err}; showing the missing-texture checker",
+                node.id
+            );
+            reported.insert(node.id.clone());
+            node.output = Output::Single(fallbacks.missing.clone());
+        }
+    }
+}
+
 /// Recompile project node files that changed on disk. Header changes that
 /// alter inputs or parameters need a restart; the body is live.
 pub fn hot_reload(

@@ -213,12 +213,20 @@ needs rustc ≥ 1.95; `rust-toolchain.toml` pins channel 1.98.
 Linux build deps (Debian/Ubuntu): `libxkbcommon-dev libxkbcommon-x11-dev
 libwayland-dev libasound2-dev libudev-dev libzstd-dev pkg-config`.
 
-Headless smoke test (Xvfb + Mesa lavapipe):
+Smoke test, run before pushing (CI runs it too): builds every project,
+renders one frame of each headless (Xvfb + Mesa lavapipe when there is no
+display, the real GPU otherwise) and fails on logged errors or a black frame.
+Frames land in `target/smoke/` for comparison against `docs/`.
 
 ```sh
-xvfb-run -a -s "-screen 0 1280x720x24" env WGPU_BACKEND=vulkan \
-  target/debug/zygote-demo --capture out.png --frames 90
+scripts/smoke.sh              # all projects
+scripts/smoke.sh haze         # one project
 ```
+
+A missing or unreadable image asset logs an error and renders as a
+magenta/black checker rather than a black output. The output window is
+re-created if the OS removes it (monitor unplugged); the renderer never exits
+on window loss.
 
 ## Not in this pass
 

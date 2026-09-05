@@ -134,6 +134,7 @@ impl Plugin for ZygotePlugin {
             Update,
             (
                 nodes::hot_reload,
+                nodes::watch_image_loads,
                 nodes::swap_feedback,
                 nodes::rewire,
                 nodes::apply_params,

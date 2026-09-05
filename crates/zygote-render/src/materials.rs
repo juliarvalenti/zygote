@@ -38,6 +38,8 @@ pub struct Fallbacks {
     pub black: Handle<Image>,
     /// Placeholder shown by `camera` nodes until a capture backend writes frames.
     pub camera_placeholder: Handle<Image>,
+    /// Magenta/black checker for image assets that do not exist or failed to load.
+    pub missing: Handle<Image>,
 }
 
 impl Fallbacks {
@@ -80,6 +82,35 @@ impl Fallbacks {
         );
         placeholder.sampler = node_sampler();
         fallbacks.camera_placeholder = images.add(placeholder);
+
+        let (w, h) = (64u32, 64u32);
+        let mut data = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let on = ((x / 8) + (y / 8)).is_multiple_of(2);
+                let (r, g, b) = if on { (255, 0, 255) } else { (0, 0, 0) };
+                data.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        let mut missing = Image::new(
+            Extent3d {
+                width: w,
+                height: h,
+                ..Default::default()
+            },
+            TextureDimension::D2,
+            data,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        missing.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            mag_filter: ImageFilterMode::Nearest,
+            min_filter: ImageFilterMode::Nearest,
+            ..Default::default()
+        });
+        fallbacks.missing = images.add(missing);
     }
 }
 

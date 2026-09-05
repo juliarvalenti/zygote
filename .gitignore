@@ -1,7 +1,9 @@
-/target
-/target-core
+# Build output anywhere in the tree (a nested target dir once slipped past a root-anchored rule).
+target/
+target-core/
+# Screenshots and captures are scratch, except tracked assets and docs.
 *.png
 !crates/zygote-render/assets/**/*.png
-zygote-timeline.json
-
+!projects/**/assets/**/*.png
 !docs/*.png
+zygote-timeline.json

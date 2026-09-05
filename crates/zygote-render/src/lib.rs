@@ -36,6 +36,7 @@ mod capture;
 mod materials;
 mod net;
 mod nodes;
+mod output_window;
 mod params;
 mod plugin;
 mod scene;
