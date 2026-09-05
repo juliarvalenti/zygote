@@ -163,6 +163,9 @@ fn target_image(resolution: UVec2) -> Image {
 }
 
 /// Instantiate the graph from the `GraphRes` resource.
+// Bevy systems declare their world access through parameters; splitting this
+// one up would only hide that.
+#[allow(clippy::too_many_arguments)]
 pub fn build_runtime(
     mut commands: Commands,
     graph: Res<GraphRes>,

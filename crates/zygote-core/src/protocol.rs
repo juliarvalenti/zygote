@@ -156,14 +156,9 @@ impl ParamSender {
     /// Drain replies (e.g. `Describe`).
     pub fn poll(&mut self) -> Vec<Message> {
         let mut out = Vec::new();
-        loop {
-            match self.socket.recv_from(&mut self.buf) {
-                Ok((len, _)) => {
-                    if let Ok(msg) = Message::decode(&self.buf[..len]) {
-                        out.push(msg);
-                    }
-                }
-                Err(_) => break,
+        while let Ok((len, _)) = self.socket.recv_from(&mut self.buf) {
+            if let Ok(msg) = Message::decode(&self.buf[..len]) {
+                out.push(msg);
             }
         }
         out

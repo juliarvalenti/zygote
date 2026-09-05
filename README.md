@@ -18,6 +18,13 @@ cue timeline. Two processes, one shared data model.
 | `crates/zygote-render` | nannou/Bevy app. Instantiates the graph as render-to-texture passes with custom WGSL materials and shows the result on a quad in a perspective 3D scene. |
 | `crates/zygote-timeline` | gpui-kit window: transport, cue axis, one slider per parameter. Sends numbers, knows nothing about textures. |
 
+| first pass: image → warp → feedback | showcase graph (every node kind) | timeline UI |
+| --- | --- | --- |
+| ![](docs/render-first-pass.png) | ![](docs/render-showcase.png) | ![](docs/timeline-ui.png) |
+
+Screenshots were produced headless (Xvfb + Mesa lavapipe) with the timeline
+connected and cue 1 applied.
+
 ## Versions
 
 nannou `0.20.0` is the first Bevy-based nannou release and pins Bevy `0.19`.

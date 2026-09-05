@@ -223,7 +223,7 @@ impl TimelineApp {
         cx.notify();
     }
 
-    fn release_override(&mut self, path: &ParamPath, cx: &mut Context<Self>) {
+    fn release_override(&mut self, path: &ParamPath, window: &mut Window, cx: &mut Context<Self>) {
         self.overrides.remove(path);
         if !self.timeline.evaluate(self.playhead).contains_key(path)
             && let Some(sender) = &self.sender
@@ -233,13 +233,14 @@ impl TimelineApp {
             self.sent.remove(path);
         }
         self.push_values();
+        self.sync_sliders(window, cx);
         cx.notify();
     }
 
-    fn release_all(&mut self, cx: &mut Context<Self>) {
+    fn release_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths: Vec<_> = self.overrides.keys().cloned().collect();
         for path in paths {
-            self.release_override(&path, cx);
+            self.release_override(&path, window, cx);
         }
     }
 
@@ -844,9 +845,9 @@ impl TimelineApp {
                             .xsmall()
                             .label(if overridden { "manual ✕" } else { "cue" })
                             .disabled(!overridden)
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.release_override(&path, cx)),
-                            ),
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.release_override(&path, window, cx)
+                            })),
                     ),
             );
         }
@@ -870,7 +871,7 @@ impl Render for TimelineApp {
                     .small()
                     .label("Release all manual overrides")
                     .disabled(self.overrides.is_empty())
-                    .on_click(cx.listener(|this, _, _, cx| this.release_all(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.release_all(window, cx))),
             );
         let transport = self.render_transport(cx);
         let axis = self.render_axis(cx);
