@@ -6,11 +6,13 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme, Disableable, Root, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use zygote_core::{
-    DEFAULT_PORT, Graph, Message, ParamDescriptor, ParamPath, ParamSender, Timeline, Transition,
+    DEFAULT_PORT, Graph, GraphStructure, Message, NodeId, NodeLibrary, PROTOCOL_VERSION,
+    ParamDescriptor, ParamPath, ParamSender, ParamType, ParamValue, Timeline, Transition,
 };
 
 /// UI refresh / send rate.
@@ -18,6 +20,9 @@ const TICK: Duration = Duration::from_millis(33);
 /// How long to wait for the renderer's `Describe` before falling back to the
 /// built-in first-pass graph for the parameter list.
 const DESCRIBE_TIMEOUT: Duration = Duration::from_millis(1500);
+/// Re-send `Hello` this often while the renderer is silent, so a restarted
+/// renderer is picked up (and re-fed the current values) automatically.
+const HELLO_INTERVAL: Duration = Duration::from_secs(2);
 const TIMELINE_HEIGHT: f32 = 110.0;
 const NODE_W: f32 = 168.0;
 const NODE_H: f32 = 46.0;
@@ -87,11 +92,13 @@ pub fn run() {
     });
 }
 
-/// One slider bound to a parameter.
+/// One control bound to a parameter. Floats get a slider, vec2/color get one
+/// slider per component, bools a switch, choices a button row.
 struct ParamControl {
     desc: ParamDescriptor,
-    slider: Entity<SliderState>,
-    _subscription: Subscription,
+    /// Slider per numeric component (1 for float, 2 for vec2, 3 for color rgb).
+    sliders: Vec<Entity<SliderState>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -104,7 +111,7 @@ enum Drag {
 pub struct TimelineApp {
     file: PathBuf,
     /// Structure of the renderer's graph, drawn read-only above the axis.
-    graph: Option<Graph>,
+    graph: Option<GraphStructure>,
     /// Pan offset of the graph surface inside its viewport, in pixels.
     graph_pan: Point<f32>,
     /// Mouse position and pan at the start of a graph drag.
@@ -118,13 +125,18 @@ pub struct TimelineApp {
     selected: Option<u32>,
     params: Vec<ParamControl>,
     /// Manual values that beat the programmed cues until released.
-    overrides: BTreeMap<ParamPath, f32>,
+    overrides: BTreeMap<ParamPath, ParamValue>,
     /// Last values pushed to the renderer, for diffing.
-    sent: BTreeMap<ParamPath, f32>,
+    sent: BTreeMap<ParamPath, ParamValue>,
     sender: Option<ParamSender>,
     described: bool,
     describe_buffer: Vec<ParamDescriptor>,
     started: Instant,
+    last_hello: Instant,
+    last_heard: Option<Instant>,
+    /// Set once the renderer stops answering; cleared (with a re-describe) when it returns.
+    quiet: bool,
+    protocol_mismatch: Option<u32>,
     last_tick: Instant,
     drag: Drag,
     axis_bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -149,9 +161,7 @@ impl TimelineApp {
 
         let sender = match ParamSender::connect(options.target.as_str()) {
             Ok(s) => {
-                let _ = s.send(&Message::Hello {
-                    client: "zygote-timeline".to_owned(),
-                });
+                let _ = s.send(&Message::hello("zygote-timeline"));
                 Some(s)
             }
             Err(e) => {
@@ -178,6 +188,10 @@ impl TimelineApp {
             described: false,
             describe_buffer: Vec::new(),
             started: Instant::now(),
+            last_hello: Instant::now(),
+            last_heard: None,
+            quiet: false,
+            protocol_mismatch: None,
             last_tick: Instant::now(),
             drag: Drag::None,
             axis_bounds: Rc::new(Cell::new(Bounds::default())),
@@ -213,32 +227,92 @@ impl TimelineApp {
         let values = self.effective_values();
         self.params.clear();
         for desc in descriptors {
-            let current = values.get(&desc.path).copied().unwrap_or(desc.value);
-            let slider = cx.new(|_| {
-                SliderState::new()
-                    .min(desc.min)
-                    .max(desc.max)
-                    .step(step_for(&desc))
-                    .default_value(current)
-            });
-            let path = desc.path.clone();
-            let subscription = cx.subscribe(&slider, move |this, _, event: &SliderEvent, cx| {
-                if let SliderEvent::Change(value) = event {
-                    this.on_slider(&path, value.start(), cx);
+            let current = values
+                .get(&desc.path)
+                .cloned()
+                .unwrap_or_else(|| desc.value.clone());
+            let ranges: Vec<(f32, f32, f32)> = match (&desc.ty, &current) {
+                (ParamType::Float { min, max }, v) => {
+                    vec![(*min, *max, v.as_float().unwrap_or(*min))]
                 }
-            });
+                (ParamType::Vec2 { min, max }, v) => {
+                    let xy = v.as_vec2().unwrap_or([0.0; 2]);
+                    vec![(*min, *max, xy[0]), (*min, *max, xy[1])]
+                }
+                (ParamType::Color, v) => {
+                    let c = v.as_color().unwrap_or([1.0; 4]);
+                    vec![(0.0, 1.0, c[0]), (0.0, 1.0, c[1]), (0.0, 1.0, c[2])]
+                }
+                _ => Vec::new(),
+            };
+            let mut sliders = Vec::new();
+            let mut subscriptions = Vec::new();
+            for (component, (min, max, value)) in ranges.into_iter().enumerate() {
+                let step = step_for(&desc, max - min);
+                let slider = cx.new(|_| {
+                    SliderState::new()
+                        .min(min)
+                        .max(max)
+                        .step(step)
+                        .default_value(value)
+                });
+                let path = desc.path.clone();
+                subscriptions.push(cx.subscribe(
+                    &slider,
+                    move |this, _, event: &SliderEvent, cx| {
+                        if let SliderEvent::Change(value) = event {
+                            this.on_component(&path, component, value.start(), cx);
+                        }
+                    },
+                ));
+                sliders.push(slider);
+            }
             self.params.push(ParamControl {
                 desc,
-                slider,
-                _subscription: subscription,
+                sliders,
+                _subscriptions: subscriptions,
             });
         }
         self.sync_sliders(window, cx);
         cx.notify();
     }
 
-    fn on_slider(&mut self, path: &ParamPath, value: f32, cx: &mut Context<Self>) {
-        // Manual control: this value wins over the cues until released.
+    /// A slider moved: manual control of one component of a parameter.
+    fn on_component(
+        &mut self,
+        path: &ParamPath,
+        component: usize,
+        value: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.effective_values().get(path).cloned().or_else(|| {
+            self.params
+                .iter()
+                .find(|c| &c.desc.path == path)
+                .map(|c| c.desc.value.clone())
+        });
+        let Some(current) = current else { return };
+        let next = match current {
+            ParamValue::Float(_) => ParamValue::Float(value),
+            ParamValue::Vec2(mut v) => {
+                if let Some(slot) = v.get_mut(component) {
+                    *slot = value;
+                }
+                ParamValue::Vec2(v)
+            }
+            ParamValue::Color(mut c) => {
+                if let Some(slot) = c.get_mut(component) {
+                    *slot = value;
+                }
+                ParamValue::Color(c)
+            }
+            other => other,
+        };
+        self.set_manual(path, next, cx);
+    }
+
+    /// Manual control: this value wins over the cues until released.
+    fn set_manual(&mut self, path: &ParamPath, value: ParamValue, cx: &mut Context<Self>) {
         self.overrides.insert(path.clone(), value);
         self.push_values();
         cx.notify();
@@ -266,10 +340,10 @@ impl TimelineApp {
     }
 
     /// Timeline values with manual overrides applied.
-    fn effective_values(&self) -> BTreeMap<ParamPath, f32> {
+    fn effective_values(&self) -> BTreeMap<ParamPath, ParamValue> {
         let mut values = self.timeline.evaluate(self.playhead);
         for (path, value) in &self.overrides {
-            values.insert(path.clone(), *value);
+            values.insert(path.clone(), value.clone());
         }
         values
     }
@@ -278,16 +352,16 @@ impl TimelineApp {
     fn push_values(&mut self) {
         let Some(sender) = &self.sender else { return };
         let values = self.effective_values();
-        let changed: Vec<(ParamPath, f32)> = values
+        let changed: Vec<(ParamPath, ParamValue)> = values
             .iter()
             .filter(|(path, value)| self.sent.get(*path) != Some(*value))
-            .map(|(path, value)| (path.clone(), *value))
+            .map(|(path, value)| (path.clone(), value.clone()))
             .collect();
         if changed.is_empty() {
             return;
         }
         // Keep datagrams small.
-        for chunk in changed.chunks(48) {
+        for chunk in changed.chunks(32) {
             let _ = sender.send(&Message::SetParams {
                 values: chunk.to_vec(),
             });
@@ -300,14 +374,22 @@ impl TimelineApp {
     fn sync_sliders(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let values = self.effective_values();
         for control in &self.params {
-            let Some(value) = values.get(&control.desc.path).copied() else {
+            let Some(value) = values.get(&control.desc.path) else {
                 continue;
             };
-            control.slider.update(cx, |slider, cx| {
-                if (slider.value().start() - value).abs() > 1e-6 {
-                    slider.set_value(value, window, cx);
-                }
-            });
+            let components: Vec<f32> = match value {
+                ParamValue::Float(v) => vec![*v],
+                ParamValue::Vec2(v) => v.to_vec(),
+                ParamValue::Color(c) => c[..3].to_vec(),
+                _ => Vec::new(),
+            };
+            for (slider, component) in control.sliders.iter().zip(components) {
+                slider.update(cx, |slider, cx| {
+                    if (slider.value().start() - component).abs() > 1e-6 {
+                        slider.set_value(component, window, cx);
+                    }
+                });
+            }
         }
     }
 
@@ -347,38 +429,78 @@ impl TimelineApp {
 
     fn poll_network(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut installed = None;
-        if let Some(sender) = &mut self.sender {
-            for msg in sender.poll() {
+        let messages: Vec<Message> = match &mut self.sender {
+            Some(sender) => sender.poll(),
+            None => Vec::new(),
+        };
+        {
+            for msg in messages {
+                self.last_heard = Some(Instant::now());
+                if self.quiet {
+                    // Back from the dead: ask for a fresh description so the
+                    // controls match whatever graph it now runs, and re-push state.
+                    self.quiet = false;
+                    if let Some(sender) = &self.sender {
+                        let _ = sender.send(&Message::hello("zygote-timeline"));
+                    }
+                    self.last_hello = Instant::now();
+                }
                 match msg {
-                    Message::Graph { graph } => {
-                        self.graph = Some(graph);
+                    Message::Structure {
+                        protocol,
+                        structure,
+                    } => {
+                        self.note_protocol(protocol);
+                        self.graph = Some(structure);
                         self.graph_fit_pending = true;
                     }
+                    Message::Pong { protocol } => self.note_protocol(protocol),
                     Message::Describe {
+                        protocol,
                         graph,
                         chunk,
                         chunks,
                         params,
                     } => {
+                        self.note_protocol(protocol);
                         if chunk == 0 {
                             self.describe_buffer.clear();
                         }
                         self.describe_buffer.extend(params);
                         if chunk + 1 == chunks {
+                            let was_described = self.described;
                             self.described = true;
                             self.status = format!(
-                                "connected to renderer · graph `{graph}` · {} parameters",
-                                self.describe_buffer.len()
+                                "connected to renderer · graph `{graph}` · {} parameters{}",
+                                self.describe_buffer.len(),
+                                match self.protocol_mismatch {
+                                    Some(p) => format!(
+                                        " · protocol mismatch (renderer {p}, ui {PROTOCOL_VERSION})"
+                                    ),
+                                    None => String::new(),
+                                }
                             );
-                            installed = Some(std::mem::take(&mut self.describe_buffer));
+                            let fresh = std::mem::take(&mut self.describe_buffer);
+                            // Only rebuild controls when the parameter set actually changed
+                            // (a renderer restart re-describes the same graph).
+                            let same = was_described
+                                && self.params.len() == fresh.len()
+                                && self
+                                    .params
+                                    .iter()
+                                    .zip(&fresh)
+                                    .all(|(c, d)| c.desc.path == d.path && c.desc.ty == d.ty);
+                            installed = Some((fresh, same));
                         }
                     }
                     _ => {}
                 }
             }
         }
-        if let Some(descriptors) = installed {
-            self.install_params(descriptors, window, cx);
+        if let Some((descriptors, same)) = installed {
+            if !same {
+                self.install_params(descriptors, window, cx);
+            }
             // Re-send everything so a freshly (re)started renderer picks up the state.
             self.sent.clear();
             self.push_values();
@@ -390,12 +512,40 @@ impl TimelineApp {
                 "{} · renderer not answering, using built-in first-pass parameter list",
                 self.status
             );
+            let library = NodeLibrary::builtin();
             let fallback = Graph::first_pass();
-            self.install_params(fallback.describe_params(), window, cx);
-            self.graph = Some(fallback);
+            self.install_params(fallback.describe_params(&library), window, cx);
+            self.graph = Some(fallback.structure(&library));
             self.graph_fit_pending = true;
             self.described = true;
         }
+
+        // Heartbeat. A described renderer is pinged; an undescribed or quiet
+        // one is re-greeted so a restart is picked up without user action.
+        if self.last_hello.elapsed() >= HELLO_INTERVAL
+            && let Some(sender) = &self.sender
+        {
+            let msg = if self.described && !self.quiet {
+                Message::Ping
+            } else {
+                Message::hello("zygote-timeline")
+            };
+            let _ = sender.send(&msg);
+            self.last_hello = Instant::now();
+        }
+        let silent = self
+            .last_heard
+            .is_some_and(|t| t.elapsed() > HELLO_INTERVAL * 3);
+        if silent && !self.quiet {
+            self.quiet = true;
+            self.sent.clear();
+            self.status = "renderer went quiet · waiting for it to come back".to_owned();
+            cx.notify();
+        }
+    }
+
+    fn note_protocol(&mut self, protocol: u32) {
+        self.protocol_mismatch = (protocol != PROTOCOL_VERSION).then_some(protocol);
     }
 
     fn toggle_play(&mut self, cx: &mut Context<Self>) {
@@ -895,7 +1045,7 @@ impl TimelineApp {
         };
 
         // Layout: column = depth, row = position within that column, in graph order.
-        let depths = graph.depths();
+        let depths = structure_depths(&graph);
         let mut rows_in_col: BTreeMap<usize, usize> = BTreeMap::new();
         let mut placed: BTreeMap<zygote_core::NodeId, (usize, usize)> = BTreeMap::new();
         for node in &graph.nodes {
@@ -931,7 +1081,8 @@ impl TimelineApp {
             };
             let (x, y) = pos(col, row);
             let slots = node.inputs.len().max(1) as f32;
-            for (slot, input) in node.inputs.iter().enumerate() {
+            for (slot, link) in node.inputs.iter().enumerate() {
+                let Some(input) = &link.from else { continue };
                 let Some(&(icol, irow)) = placed.get(input) else {
                     continue;
                 };
@@ -995,10 +1146,10 @@ impl TimelineApp {
             let (x, y) = pos(col, row);
             let is_output = node.id == graph.output;
             let is_source = node.inputs.is_empty();
-            let slot_names = node.kind.input_names();
+            let slot_names: Vec<String> = node.inputs.iter().map(|l| l.name.clone()).collect();
             let mut slots = v_flex().justify_around().h_full().pr_1();
-            for (i, name) in slot_names.iter().enumerate() {
-                let connected = node.inputs.get(i).is_some();
+            for link in &node.inputs {
+                let connected = link.from.is_some();
                 slots = slots.child(
                     div()
                         .text_xs()
@@ -1007,7 +1158,7 @@ impl TimelineApp {
                         } else {
                             theme.muted_foreground.opacity(0.4)
                         })
-                        .child(*name),
+                        .child(link.name.clone()),
                 );
             }
             view = view.child(
@@ -1050,7 +1201,11 @@ impl TimelineApp {
                                     .text_xs()
                                     .truncate()
                                     .text_color(theme.muted_foreground)
-                                    .child(kind_summary(&node.kind)),
+                                    .child(format!(
+                                        "{}{}",
+                                        node.kind,
+                                        if node.feedback { " · feedback" } else { "" }
+                                    )),
                             ),
                     ),
             );
@@ -1163,7 +1318,7 @@ impl TimelineApp {
                     .child("waiting for the renderer to describe its graph…"),
             );
         }
-        let mut last_node: Option<zygote_core::NodeId> = None;
+        let mut last_node: Option<NodeId> = None;
         for (i, control) in self.params.iter().enumerate() {
             let path = control.desc.path.clone();
             if last_node.as_ref() != Some(&path.node) {
@@ -1171,9 +1326,9 @@ impl TimelineApp {
                 let kind = self
                     .graph
                     .as_ref()
-                    .and_then(|g| g.node(&path.node))
-                    .map(|n| kind_summary(&n.kind))
-                    .unwrap_or_default();
+                    .and_then(|g| g.nodes.iter().find(|n| n.id == path.node))
+                    .map(|n| n.kind.clone())
+                    .unwrap_or_else(|| control.desc.node_kind.clone());
                 list = list.child(
                     h_flex()
                         .gap_2()
@@ -1195,12 +1350,100 @@ impl TimelineApp {
                 );
             }
             let overridden = self.overrides.contains_key(&path);
-            let value = values.get(&path).copied().unwrap_or(control.desc.value);
+            let value = values
+                .get(&path)
+                .cloned()
+                .unwrap_or_else(|| control.desc.value.clone());
             let label_color = if overridden {
                 theme.primary
             } else {
                 theme.foreground
             };
+
+            let widget: AnyElement = match (&control.desc.ty, &value) {
+                (ParamType::Bool, v) => {
+                    let checked = v.as_bool().unwrap_or(false);
+                    let path = path.clone();
+                    Switch::new(("switch", i))
+                        .checked(checked)
+                        .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                            this.set_manual(&path, ParamValue::Bool(*checked), cx)
+                        }))
+                        .into_any_element()
+                }
+                (ParamType::Choice { options }, v) => {
+                    let current = v.as_choice().unwrap_or("");
+                    let mut row = h_flex().gap_1().flex_wrap();
+                    for (j, option) in options.iter().enumerate() {
+                        let selected = option == current;
+                        let path = path.clone();
+                        let option_value = option.clone();
+                        row = row.child(
+                            Button::new(("choice", (i * 64 + j) as u64))
+                                .xsmall()
+                                .label(option.clone())
+                                .when(selected, |b| b.primary())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.set_manual(
+                                        &path,
+                                        ParamValue::Choice(option_value.clone()),
+                                        cx,
+                                    )
+                                })),
+                        );
+                    }
+                    row.into_any_element()
+                }
+                (ParamType::Color, v) => {
+                    let c = v.as_color().unwrap_or([1.0; 4]);
+                    let swatch = Rgba {
+                        r: c[0],
+                        g: c[1],
+                        b: c[2],
+                        a: 1.0,
+                    };
+                    let mut row = h_flex().gap_2().items_center().flex_1();
+                    row = row.child(
+                        div()
+                            .w(px(22.))
+                            .h(px(22.))
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(swatch),
+                    );
+                    for (slider, name) in control.sliders.iter().zip(["r", "g", "b"]) {
+                        row = row
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(name),
+                            )
+                            .child(Slider::new(slider).flex_1());
+                    }
+                    row.into_any_element()
+                }
+                (ParamType::Vec2 { .. }, _) => {
+                    let mut row = h_flex().gap_2().items_center().flex_1();
+                    for (slider, name) in control.sliders.iter().zip(["x", "y"]) {
+                        row = row
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(name),
+                            )
+                            .child(Slider::new(slider).flex_1());
+                    }
+                    row.into_any_element()
+                }
+                (ParamType::Float { .. }, _) => match control.sliders.first() {
+                    Some(slider) => Slider::new(slider).flex_1().into_any_element(),
+                    None => div().into_any_element(),
+                },
+            };
+
             list = list.child(
                 h_flex()
                     .gap_2()
@@ -1217,14 +1460,14 @@ impl TimelineApp {
                             .text_color(label_color)
                             .child(path.param.clone()),
                     )
-                    .child(Slider::new(&control.slider).flex_1())
+                    .child(div().flex_1().child(widget))
                     .child(
                         div()
-                            .w(px(64.))
+                            .w(px(72.))
                             .text_sm()
                             .font_family("monospace")
                             .text_color(theme.muted_foreground)
-                            .child(format!("{value:.3}")),
+                            .child(value.to_string()),
                     )
                     .child(
                         Button::new(("release", i))
@@ -1294,24 +1537,40 @@ impl Render for TimelineApp {
     }
 }
 
-/// Short description of a node kind for the graph view and param headers.
-fn kind_summary(kind: &zygote_core::NodeKind) -> String {
-    use zygote_core::NodeKind;
-    match kind {
-        NodeKind::Image { path } => format!("image · {path}"),
-        NodeKind::Camera { device } => format!("camera · device {device}"),
-        NodeKind::Blend { mode } => format!("blend · {mode:?}").to_lowercase(),
-        NodeKind::ColorGrade { lut: Some(lut) } => format!("color grade · lut {lut}"),
-        other => other.label().to_lowercase(),
+/// Longest-path depth per node of a UI structure (sources are 0).
+fn structure_depths(graph: &GraphStructure) -> BTreeMap<NodeId, usize> {
+    let mut depths: BTreeMap<NodeId, usize> = BTreeMap::new();
+    // Nodes arrive in graph order, which is not necessarily topological; iterate
+    // until stable (graphs are small and acyclic).
+    for _ in 0..graph.nodes.len().max(1) {
+        let mut changed = false;
+        for node in &graph.nodes {
+            let depth = node
+                .inputs
+                .iter()
+                .filter_map(|l| l.from.as_ref())
+                .filter_map(|from| depths.get(from))
+                .map(|d| d + 1)
+                .max()
+                .unwrap_or(0);
+            if depths.get(&node.id) != Some(&depth) {
+                depths.insert(node.id.clone(), depth);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
     }
+    depths
 }
 
-fn step_for(desc: &ParamDescriptor) -> f32 {
-    let range = (desc.max - desc.min).abs().max(1e-6);
-    // Integer-ish controls (blend mode, palette, posterize, octaves) snap to whole numbers.
+fn step_for(desc: &ParamDescriptor, range: f32) -> f32 {
+    let range = range.abs().max(1e-6);
+    // Integer-ish float controls snap to whole numbers.
     let integer_like = matches!(
         desc.path.param.as_str(),
-        "mode" | "palette" | "posterize" | "octaves"
+        "posterize" | "octaves" | "segments"
     );
     if integer_like { 1.0 } else { range / 1000.0 }
 }
@@ -1322,11 +1581,17 @@ fn default_timeline() -> Timeline {
     let mut timeline = Timeline::new(8.0);
     let values = |amount: f32, twist: f32, decay: f32, zoom: f32, rotate: f32| {
         BTreeMap::from([
-            (ParamPath::new("warp", "amount"), amount),
-            (ParamPath::new("warp", "twist"), twist),
-            (ParamPath::new("feedback", "decay"), decay),
-            (ParamPath::new("feedback", "zoom"), zoom),
-            (ParamPath::new("feedback", "rotate"), rotate),
+            (ParamPath::new("warp", "amount"), ParamValue::Float(amount)),
+            (ParamPath::new("warp", "twist"), ParamValue::Float(twist)),
+            (
+                ParamPath::new("feedback", "decay"),
+                ParamValue::Float(decay),
+            ),
+            (ParamPath::new("feedback", "zoom"), ParamValue::Float(zoom)),
+            (
+                ParamPath::new("feedback", "rotate"),
+                ParamValue::Float(rotate),
+            ),
         ])
     };
     timeline.add_cue(0.0, Transition::Cut, values(0.04, 0.0, 0.80, 1.000, 0.0));

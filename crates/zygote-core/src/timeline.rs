@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::ParamPath;
+use crate::params::ParamValue;
 
 /// How the timeline moves *into* a cue from the previous one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -40,7 +41,7 @@ pub struct Cue {
     pub label: String,
     #[serde(default)]
     pub transition: Transition,
-    pub values: BTreeMap<ParamPath, f32>,
+    pub values: BTreeMap<ParamPath, ParamValue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,7 +84,7 @@ impl Timeline {
         &mut self,
         time: f32,
         transition: Transition,
-        values: BTreeMap<ParamPath, f32>,
+        values: BTreeMap<ParamPath, ParamValue>,
     ) -> u32 {
         // Guard against files written before `next_id` existed.
         let max_existing = self.cues.iter().map(|c| c.id).max().unwrap_or(0);
@@ -155,10 +156,11 @@ impl Timeline {
     ///
     /// * Before the first cue: the first cue's values (held).
     /// * Between cues: previous cue values, blended towards the next cue when
-    ///   the next cue's transition is [`Transition::Interpolate`]. Parameters
+    ///   the next cue's transition is [`Transition::Interpolate`] (see
+    ///   [`ParamValue::interpolate`] for per-type semantics). Parameters
     ///   present in only one of the two cues are held from that cue.
     /// * After the last cue: the last cue's values.
-    pub fn evaluate(&self, t: f32) -> BTreeMap<ParamPath, f32> {
+    pub fn evaluate(&self, t: f32) -> BTreeMap<ParamPath, ParamValue> {
         if self.cues.is_empty() {
             return BTreeMap::new();
         }
@@ -176,8 +178,8 @@ impl Timeline {
                 let alpha = ((t - prev.time) / span).clamp(0.0, 1.0);
                 let mut out = prev.values.clone();
                 for (path, target) in &next.values {
-                    let entry = out.entry(path.clone()).or_insert(*target);
-                    *entry += (target - *entry) * alpha;
+                    let entry = out.entry(path.clone()).or_insert_with(|| target.clone());
+                    *entry = entry.interpolate(target, alpha);
                 }
                 out
             }
@@ -199,11 +201,15 @@ impl Timeline {
 mod tests {
     use super::*;
 
-    fn values(pairs: &[(&str, f32)]) -> BTreeMap<ParamPath, f32> {
+    fn values(pairs: &[(&str, f32)]) -> BTreeMap<ParamPath, ParamValue> {
         pairs
             .iter()
-            .map(|(p, v)| (p.parse::<ParamPath>().unwrap(), *v))
+            .map(|(p, v)| (p.parse::<ParamPath>().unwrap(), ParamValue::Float(*v)))
             .collect()
+    }
+
+    fn f(v: &ParamValue) -> f32 {
+        v.as_float().unwrap()
     }
 
     fn two_cue_timeline() -> Timeline {
@@ -235,8 +241,8 @@ mod tests {
     fn interpolates_between_cues_and_holds_missing_keys() {
         let tl = two_cue_timeline();
         let mid = tl.evaluate(4.0);
-        assert!((mid[&"warp.amount".parse::<ParamPath>().unwrap()] - 0.5).abs() < 1e-6);
-        assert_eq!(mid[&"fb.decay".parse::<ParamPath>().unwrap()], 0.5);
+        assert!((f(&mid[&"warp.amount".parse::<ParamPath>().unwrap()]) - 0.5).abs() < 1e-6);
+        assert_eq!(f(&mid[&"fb.decay".parse::<ParamPath>().unwrap()]), 0.5);
     }
 
     #[test]
@@ -244,11 +250,11 @@ mod tests {
         let mut tl = two_cue_timeline();
         tl.cue_mut(2).unwrap().transition = Transition::Cut;
         assert_eq!(
-            tl.evaluate(5.99)[&"warp.amount".parse::<ParamPath>().unwrap()],
+            f(&tl.evaluate(5.99)[&"warp.amount".parse::<ParamPath>().unwrap()]),
             0.0
         );
         assert_eq!(
-            tl.evaluate(6.0)[&"warp.amount".parse::<ParamPath>().unwrap()],
+            f(&tl.evaluate(6.0)[&"warp.amount".parse::<ParamPath>().unwrap()]),
             1.0
         );
     }

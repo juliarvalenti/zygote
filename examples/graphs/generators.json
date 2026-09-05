@@ -1,10 +1,42 @@
 {
   "name": "generators",
   "nodes": [
-    { "id": "pattern", "type": "test_pattern", "params": { "scale": 10 } },
-    { "id": "tint", "type": "solid", "params": { "r": 0.2, "g": 0.6, "b": 1.0 } },
-    { "id": "mul", "type": "blend", "mode": "multiply", "inputs": ["pattern", "tint"] },
-    { "id": "warp", "type": "warp", "inputs": ["mul"], "params": { "amount": 0.05, "twist": 1.5 } }
+    {
+      "id": "pattern",
+      "type": "test_pattern",
+      "params": {
+        "scale": 10
+      }
+    },
+    {
+      "id": "tint",
+      "type": "solid",
+      "params": {
+        "color": "#3399ff"
+      }
+    },
+    {
+      "id": "mul",
+      "type": "blend",
+      "inputs": [
+        "pattern",
+        "tint"
+      ],
+      "params": {
+        "mode": "multiply"
+      }
+    },
+    {
+      "id": "warp",
+      "type": "warp",
+      "inputs": [
+        "mul"
+      ],
+      "params": {
+        "amount": 0.05,
+        "twist": 1.5
+      }
+    }
   ],
   "output": "warp"
 }

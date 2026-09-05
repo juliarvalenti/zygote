@@ -10,7 +10,12 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{Graph, ParamDescriptor, ParamPath};
+use crate::graph::{GraphStructure, ParamPath};
+use crate::params::{ParamDescriptor, ParamValue};
+
+/// Bumped whenever a message shape changes incompatibly. Both sides announce
+/// it; a mismatch is reported to the user instead of silently misbehaving.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Default UDP port the renderer listens on.
 pub const DEFAULT_PORT: u16 = 9471;
@@ -23,28 +28,38 @@ pub const MAX_DATAGRAM: usize = 60 * 1024;
 #[serde(tag = "msg", rename_all = "snake_case")]
 pub enum Message {
     /// UI → renderer: announce yourself and ask for a description.
-    Hello { client: String },
-    /// Renderer → UI: the structure of the loaded graph (nodes, kinds,
-    /// wiring, output). Sent before `Describe` so the UI can draw the chain.
-    Graph { graph: Graph },
+    Hello { client: String, protocol: u32 },
+    /// Renderer → UI: what the graph looks like, in UI terms only (no node
+    /// kinds, shaders or engine types). Sent before `Describe`.
+    Structure {
+        protocol: u32,
+        structure: GraphStructure,
+    },
     /// Renderer → UI: the parameters of the loaded graph. May arrive in
     /// several chunks (`chunk` of `chunks`).
     Describe {
+        protocol: u32,
         graph: String,
         chunk: u16,
         chunks: u16,
         params: Vec<ParamDescriptor>,
     },
     /// UI → renderer: set one parameter (an override that wins over the graph's base value).
-    SetParam { path: ParamPath, value: f32 },
+    SetParam { path: ParamPath, value: ParamValue },
     /// UI → renderer: set several parameters at once.
-    SetParams { values: Vec<(ParamPath, f32)> },
+    SetParams {
+        values: Vec<(ParamPath, ParamValue)>,
+    },
     /// UI → renderer: drop the override for one parameter, back to the graph's base value.
     ClearParam { path: ParamPath },
     /// UI → renderer: drop all overrides.
     ClearAll,
     /// UI → renderer: informational transport state (for on-screen display / debugging).
     Transport { time: f32, playing: bool },
+    /// UI → renderer: liveness probe.
+    Ping,
+    /// Renderer → UI: reply to `Ping`.
+    Pong { protocol: u32 },
 }
 
 impl Message {
@@ -58,12 +73,13 @@ impl Message {
 
     /// Split a parameter description into datagram-sized chunks.
     pub fn describe(graph: &str, params: &[ParamDescriptor]) -> Vec<Message> {
-        // Conservative: a descriptor with a long doc string is a few hundred bytes.
-        const PER_CHUNK: usize = 64;
+        // Conservative: a descriptor with options and a doc string is a few hundred bytes.
+        const PER_CHUNK: usize = 48;
         let chunks = params.chunks(PER_CHUNK).collect::<Vec<_>>();
         let total = chunks.len().max(1) as u16;
         if chunks.is_empty() {
             return vec![Message::Describe {
+                protocol: PROTOCOL_VERSION,
                 graph: graph.to_owned(),
                 chunk: 0,
                 chunks: 1,
@@ -74,12 +90,33 @@ impl Message {
             .into_iter()
             .enumerate()
             .map(|(i, part)| Message::Describe {
+                protocol: PROTOCOL_VERSION,
                 graph: graph.to_owned(),
                 chunk: i as u16,
                 chunks: total,
                 params: part.to_vec(),
             })
             .collect()
+    }
+
+    pub fn pong() -> Message {
+        Message::Pong {
+            protocol: PROTOCOL_VERSION,
+        }
+    }
+
+    pub fn hello(client: &str) -> Message {
+        Message::Hello {
+            client: client.to_owned(),
+            protocol: PROTOCOL_VERSION,
+        }
+    }
+
+    pub fn structure(structure: GraphStructure) -> Message {
+        Message::Structure {
+            protocol: PROTOCOL_VERSION,
+            structure,
+        }
     }
 }
 
@@ -172,12 +209,13 @@ impl ParamSender {
 mod tests {
     use super::*;
     use crate::graph::Graph;
+    use crate::node_def::NodeLibrary;
 
     #[test]
     fn message_roundtrip() {
         let msg = Message::SetParam {
             path: ParamPath::new("warp", "amount"),
-            value: 0.25,
+            value: ParamValue::Float(0.25),
         };
         let bytes = msg.encode();
         assert_eq!(
@@ -188,17 +226,39 @@ mod tests {
     }
 
     #[test]
-    fn graph_message_fits_a_datagram() {
-        let msg = Message::Graph {
-            graph: Graph::showcase(),
+    fn structure_message_fits_a_datagram_and_carries_no_engine_types() {
+        let msg = Message::structure(Graph::showcase().structure(&NodeLibrary::builtin()));
+        let bytes = msg.encode();
+        assert!(bytes.len() < MAX_DATAGRAM);
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            !text.contains("wgsl") && !text.contains("\"source\":"),
+            "{text}"
+        );
+        assert_eq!(Message::decode(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn typed_values_roundtrip_on_the_wire() {
+        let msg = Message::SetParams {
+            values: vec![
+                (
+                    ParamPath::new("blend", "mode"),
+                    ParamValue::Choice("add".into()),
+                ),
+                (
+                    ParamPath::new("solid", "color"),
+                    ParamValue::Color([1.0, 0.0, 0.0, 1.0]),
+                ),
+                (ParamPath::new("x", "on"), ParamValue::Bool(true)),
+            ],
         };
-        assert!(msg.encode().len() < MAX_DATAGRAM);
         assert_eq!(Message::decode(&msg.encode()).unwrap(), msg);
     }
 
     #[test]
     fn describe_chunks_cover_all_params() {
-        let params = Graph::showcase().describe_params();
+        let params = Graph::showcase().describe_params(&NodeLibrary::builtin());
         let msgs = Message::describe("showcase", &params);
         let mut total = 0;
         for m in &msgs {
@@ -215,10 +275,7 @@ mod tests {
         let mut rx = ParamReceiver::bind(0).unwrap();
         let addr = rx.local_addr().unwrap();
         let mut tx = ParamSender::connect(addr).unwrap();
-        tx.send(&Message::Hello {
-            client: "test".into(),
-        })
-        .unwrap();
+        tx.send(&Message::hello("test")).unwrap();
         let mut got = Vec::new();
         for _ in 0..50 {
             got = rx.poll();

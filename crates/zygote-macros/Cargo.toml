@@ -1,0 +1,18 @@
+[package]
+name = "zygote-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Derive macros for Zygote node parameters"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+proc-macro-crate = "3"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+zygote-core.workspace = true

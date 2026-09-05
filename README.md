@@ -1,135 +1,184 @@
 # Zygote
 
-A real-time visual signal chain: image → warp → feedback → window, driven by a
-cue timeline. Two processes, one shared data model.
+A real-time visual signal chain for live shows: a node graph of GPU passes,
+driven by a cue timeline. Projects depend on Zygote as a library and add their
+own nodes in Rust or WGSL.
 
 ```
 ┌────────────────────┐   UDP / JSON (node.param = value)   ┌───────────────────────────┐
-│  zygote-timeline   │ ───────────────────────────────────▶ │  zygote-render            │
-│  gpui-kit host UI  │ ◀─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │  nannou 0.20 / Bevy 0.19  │
-│  cues · transport  │      Describe (param list, once)     │  node graph · shaders     │
+│  zygote-timeline   │ ───────────────────────────────────▶ │  your project binary      │
+│  gpui-kit host UI  │ ◀─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ │  = zygote-render library  │
+│  cues · transport  │   structure + params (on connect)    │  + your nodes + your graph│
 └────────────────────┘                                      └───────────────────────────┘
-            └──────────────── zygote-core (graph, params, timeline, protocol) ───────────────┘
+            └──────────────── zygote-core (node defs, typed params, graph, timeline, protocol) ─┘
 ```
 
 | crate | what |
 | --- | --- |
-| `crates/zygote-core` | Graphics-free data model: node graph, parameter addressing (`node.param`), modulators, cue timeline, wire protocol. Fully unit tested. |
-| `crates/zygote-render` | nannou/Bevy app. Instantiates the graph as render-to-texture passes with custom WGSL materials and shows the result on a quad in a perspective 3D scene. |
-| `crates/zygote-timeline` | gpui-kit window: transport, cue axis, one slider per parameter. Sends numbers, knows nothing about textures. |
+| `crates/zygote-core` | Graphics-free data model: node definitions, typed parameters, graphs, modulators, cue timeline, wire protocol. Pure functions, fully unit tested. |
+| `crates/zygote-macros` | `#[derive(NodeParams)]`: a Rust struct is a node's whole parameter declaration. |
+| `crates/zygote-render` | The engine as a library (nannou 0.20 / Bevy 0.19) plus the stock `zygote` binary. One generic shader-node material; node code never touches Bevy. |
+| `crates/zygote-timeline` | gpui-kit window: graph view, transport, cue axis, typed controls per parameter. Knows nothing about shaders. |
+| `projects/demo` | A project consuming the engine: one Rust-declared node, one WGSL-file node, its own graph and assets. |
 
-| first pass: image → warp → feedback | showcase graph (every node kind) | timeline UI |
-| --- | --- | --- |
-| ![](docs/render-first-pass.png) | ![](docs/render-showcase.png) | ![](docs/timeline-ui.png) |
+| demo project (kaleido + scanlines are project nodes) | timeline UI driving it |
+| --- | --- |
+| ![](docs/render-demo.png) | ![](docs/timeline-ui.png) |
 
-Screenshots were produced headless (Xvfb + Mesa lavapipe) with the timeline
-connected and cue 1 applied.
-
-## Versions
-
-nannou `0.20.0` is the first Bevy-based nannou release and pins Bevy `0.19`.
-gpui-kit `0.6.0` builds on the `gpui-pre 0.3.x` snapshot of Zed's gpui. Both
-are pinned with `=` in the workspace `Cargo.toml`; nannou's Bevy migration is
-still moving (nannou-org/nannou#946), so bump the pair deliberately.
-Bevy 0.19 needs rustc ≥ 1.95; `rust-toolchain.toml` pins a compatible stable.
-
-Linux build dependencies (Debian/Ubuntu names): `libxkbcommon-dev
-libxkbcommon-x11-dev libwayland-dev libasound2-dev libudev-dev libzstd-dev`.
-
-## Running the first pass
+## Running
 
 ```sh
-# terminal 1: image → warp → feedback → window (default graph)
-cargo run --release -p zygote-render
-
-# terminal 2: timeline UI; connects to udp://127.0.0.1:9471, starts with two demo cues
-cargo run --release -p zygote-timeline
+cargo run --release -p zygote-demo        # a project: image → warp → kaleido → feedback → scanlines
+cargo run --release -p zygote-timeline    # the UI; connects to udp://127.0.0.1:9471
+cargo run --release -p zygote -- --showcase   # stock renderer, builtin nodes only
 ```
 
-The timeline asks the renderer to describe its graph and builds a slider for
-every parameter it reports. Press **Play**: the playhead loops over 8 seconds
-and interpolates from cue 1 (gentle warp, short trails) to cue 2 (strong warp,
-twist, long zooming trails). Click the axis to scrub, drag a marker to move a
-cue. Moving a slider takes manual control of that parameter; it stays yours
-until you press its release button, and manual values always beat the cues.
+The UI asks the renderer for its graph structure and parameter list, draws
+the graph, and builds one control per parameter: sliders for floats and
+vec2/color components, a switch for bools, a button row for choices. Press
+**Play** to loop the demo cues. Moving a control takes manual control of that
+parameter until released; manual always beats the cues. If the renderer is
+restarted the UI notices, re-describes, and re-pushes its state.
 
-Renderer keys: `S` saves a screenshot next to the executable, `Esc` quits.
+Renderer options: `[graph.json] [--port N] [--size WxH] [--assets DIR]
+[--nodes DIR] [--showcase] [--capture out.png [--frames N]]`. Keys: `S`
+screenshot, `Esc` quit.
 
-Other graphs and options:
+## What a node is
 
-```sh
-cargo run -p zygote-render -- examples/graphs/showcase.json      # every node kind
-cargo run -p zygote-render -- --showcase --size 1920x1080         # built-in showcase, larger targets
-cargo run -p zygote-render -- --capture out.png --frames 120      # render N frames, save, exit
-cargo run -p zygote-timeline -- examples/timelines/two-cues.json  # load/save a specific cue file
+A node is one fullscreen pass with named texture inputs, an optional feedback
+tap and typed parameters. That is the whole vocabulary; render targets,
+cameras, wiring, feedback ping-pong, uniform layout, UI controls and cue
+interpolation are all derived from the declaration. Two ways to write one:
+
+**A WGSL file** with a `//!` header, loaded from a project's `assets/nodes/`
+and hot-reloaded on save:
+
+```wgsl
+//! node: scanlines
+//! doc: CRT-style scanlines
+//! input source
+//! param density: float = 180 in 20..600 "Lines across the frame"
+//! param tint: color = #b8ffd0 "Phosphor tint"
+
+@fragment
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    let c = source(in.uv).rgb;                       // inputs are functions
+    let line = 0.5 + 0.5 * sin(in.uv.y * params.density * 3.14159);
+    return vec4<f32>(c * line * params.tint.rgb, 1.0);   // params.<name>, frame.time, frame.aspect
+}
 ```
 
-## Signal-chain primitives
+**A Rust type**, when you want typed access or to ship the node in a crate:
 
-Every node is a `NodeSpec` (`id`, `type`, `inputs`, `params`) in an ordered,
-reconfigurable `Graph`. Processing nodes are texture in → texture out.
+```rust
+use zygote_render::prelude::*;
 
-| type | inputs | parameters | notes |
-| --- | --- | --- | --- |
-| `image` | – | – | PNG/JPEG from the asset directory |
-| `camera` | – | – | Live input. No capture backend yet: renders a placeholder and logs a warning. The output is an ordinary `Image` a backend only has to write into. |
-| `solid` | – | `r g b` | |
-| `test_pattern` | – | `scale` | Colour bars, grid, ring |
-| `noise` | – | `scale speed octaves contrast` | fBm gradient noise, two independent channels so it can drive warps |
-| `warp` | `source`, optional `displacement` | `amount scale speed twist` | UV remap by a displacement texture or an internal animated noise field |
-| `blend` | `a b` | `mode mix` | multiply / screen / add / alpha (`mode` 0–3) |
-| `feedback` | `source` | `decay zoom rotate hue_shift mix` | Ping-pong render targets; last frame is transformed and lightened under the source |
-| `color_grade` | `source` | `hue saturation posterize palette palette_mix lut_mix` | Optional `lut` image (horizontal strip indexed by luminance) plus built-in cosine palettes |
+#[derive(NodeParams, Clone)]
+struct Kaleido {
+    /// Number of mirror wedges
+    #[param(default = 6.0, min = 1.0, max = 24.0)]
+    segments: f32,
+    #[param(default = "screen", options = ["multiply", "screen", "add", "alpha"])]
+    mode: String,
+    #[param(default = "#ffffff")]
+    tint: [f32; 4],
+}
 
-Modulators live on the graph as `modulations`: `time`, `lfo` (sine / triangle
-/ saw / square), and the audio hook `audio_band { band }` / `audio_level`.
-Audio bands are an 8-slot `AudioBands` resource that nothing fills yet; an
-FFT stage only needs to write into `AudioBandsRes` each frame.
+impl RustNode for Kaleido {
+    const NAME: &'static str = "kaleido";
+    const INPUTS: &'static [Input] = &[Input::required("source")];
+    const SHADER: &'static str = include_str!("kaleido.wgsl");
+    type Params = Self;
+}
+
+fn main() {
+    ZygoteApp::new()
+        .asset_root(env!("CARGO_MANIFEST_DIR"))
+        .register::<Kaleido>()
+        .node_dir("nodes")
+        .graph_file("graphs/main.json")
+        .parse_args()
+        .run();
+}
+```
+
+Parameter types: `float` (min..max), `bool`, `choice` (named options),
+`color` (`#rrggbb`), `vec2`. Floats, vec2 and colors interpolate between
+cues; bools and choices hold until the target cue's time. Generated WGSL
+gives every node `params.<name>`, `<input>(uv)`, `has_<input>()`,
+`previous(uv)` for feedback nodes, and `frame.{time, dt, aspect, index}`.
+Param and input names must not collide with imported WGSL items; the header
+parser rejects that.
+
+Builtin nodes (`crates/zygote-core/nodes/`): `solid`, `test_pattern`,
+`noise`, `warp`, `blend`, `feedback`, `color_grade`. Structural kinds the
+renderer implements itself: `image` (PNG/JPEG asset) and `camera`
+(placeholder; no capture backend yet).
+
+If an effect cannot be expressed as one pass with these declarations, the
+answer is to grow this vocabulary in Zygote (a compute pass, an intermediate
+target), not to hand a node Bevy's `World`. Most project nodes needing raw
+Rust would mean the vocabulary is wrong.
+
+## Graph files
+
+Wiring and initial values only; node kinds come from the library:
+
+```json
+{
+  "name": "demo",
+  "nodes": [
+    { "id": "image",   "type": "image", "path": "images/sample.png" },
+    { "id": "warp",    "type": "warp", "inputs": ["image"], "params": { "amount": 0.06 } },
+    { "id": "kaleido", "type": "kaleido", "inputs": ["warp"], "params": { "segments": 8, "tint": "#ffe0c0" } },
+    { "id": "trails",  "type": "feedback", "inputs": ["kaleido"], "params": { "decay": 0.88 } }
+  ],
+  "output": "trails",
+  "modulations": [ { "target": "warp.amount", "source": "lfo", "rate_hz": 0.1, "phase": 0, "shape": "sine", "depth": 0.05 } ]
+}
+```
+
+Modulators: `time`, `lfo` (sine/triangle/saw/square), `audio_band {band}` and
+`audio_level` (an 8-band `AudioBands` hook nothing fills yet).
 
 ## Architecture notes
 
-**Addressable parameters.** Every controllable value is `node_id.param`.
-`Graph::describe_params()` lists them with ranges; that list is what the
-renderer sends to the UI, and what the timeline stores in cues. Nothing
-downstream of `zygote-core` hardcodes a pipeline.
+- **Render passes.** `nodes::build_runtime` walks the graph in topological
+  order; each shader node gets an offscreen `Camera3d` on its own render
+  layer, a fullscreen quad with the single `NodeMaterial`, and an
+  `Rgba16Float` target (two for feedback, swapped every frame). The pipeline
+  key carries the node's generated shader, so one material type renders every
+  node kind. The window shows the output on a quad in a perspective 3D scene.
+- **Resolution order** (`zygote_core::resolve_params`): graph base value →
+  cue → manual override, plus float modulators, conformed to the type.
+- **Protocol v2.** JSON per UDP datagram, version field in every renderer
+  message: `hello`, `structure` (UI-facing graph summary), `describe`
+  (typed parameter descriptors), `set_param(s)`, `clear_param`, `clear_all`,
+  `transport`, `ping`/`pong`.
+- **Projects** are workspace members depending on `zygote-render` by path.
+  Version pinning and a project template are deferred until a project needs
+  to stop moving with the engine.
 
-**Render passes.** `nodes::build_runtime` walks the graph in topological
-order and, per processing node, spawns an offscreen `Camera3d` on its own
-render layer, a fullscreen quad with that node's `Material`, and an
-`Rgba16Float` render target (`Image::new_target_texture`). Camera `order`
-follows graph order so each frame flows source → output. The feedback node
-owns two targets and swaps them every frame (`swap_feedback`); `rewire`
-repoints downstream materials at whichever texture is current. The window
-camera is a perspective `Camera3d` at z = 3 looking at a quad textured with
-the output.
+## Versions and building
 
-**Shaders.** One WGSL file per node kind under
-`crates/zygote-render/src/shaders/`, embedded with `embedded_asset!` and
-sharing `zygote::common` (noise, hue rotation, palettes). Parameters are
-packed into `vec4` lanes. Build with `--features hot_reload` to have Bevy
-watch the embedded shaders.
+nannou `0.20.0` is the first Bevy-based nannou and pins Bevy `0.19`; gpui-kit
+`0.6.0` builds on `gpui-pre 0.3.x`. Both are pinned with `=`. Bevy 0.19
+needs rustc ≥ 1.95; `rust-toolchain.toml` pins channel 1.98.
 
-**Resolution order** (`zygote_core::resolve_params`): graph base value →
-timeline cue → manual override → plus modulators, clamped to the spec range.
-The UI evaluates the timeline itself and only ever sends resolved numbers, so
-the renderer treats cue values and manual overrides identically.
+Linux build deps (Debian/Ubuntu): `libxkbcommon-dev libxkbcommon-x11-dev
+libwayland-dev libasound2-dev libudev-dev libzstd-dev pkg-config`.
 
-**Protocol.** JSON per UDP datagram (`zygote_core::Message`): `hello`,
-`describe`, `set_param`, `set_params`, `clear_param`, `clear_all`,
-`transport`. Any OSC-style client can drive the renderer with the same
-messages.
-
-## Headless smoke test
-
-The renderer runs under Xvfb with Mesa's lavapipe:
+Headless smoke test (Xvfb + Mesa lavapipe):
 
 ```sh
 xvfb-run -a -s "-screen 0 1280x720x24" env WGPU_BACKEND=vulkan \
-  target/debug/zygote-render --capture out.png --frames 90
+  target/debug/zygote-demo --capture out.png --frames 90
 ```
 
 ## Not in this pass
 
-- Live camera capture backend (node and hook exist; no OS capture code).
-- Real audio analysis (modulator + `AudioBands` hook exist).
-- Runtime graph editing from the UI (the graph is loaded from JSON; parameters are live).
+- Live camera capture backend (kind and hook exist).
+- Real audio analysis (modulator and hook exist).
+- Runtime graph editing from the UI; graphs are files the agent edits.
+- Compute passes and multi-pass nodes; the vocabulary grows when an effect needs them.

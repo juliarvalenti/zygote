@@ -1,10 +1,33 @@
 {
   "name": "first-pass",
   "nodes": [
-    { "id": "image", "type": "image", "path": "images/sample.png" },
-    { "id": "warp", "type": "warp", "inputs": ["image"], "params": { "amount": 0.12, "scale": 2.5 } },
-    { "id": "feedback", "type": "feedback", "inputs": ["warp"], "params": { "decay": 0.9, "zoom": 1.012 } }
+    {
+      "id": "image",
+      "type": "image",
+      "path": "images/sample.png"
+    },
+    {
+      "id": "warp",
+      "type": "warp",
+      "inputs": [
+        "image"
+      ],
+      "params": {
+        "amount": 0.12,
+        "scale": 2.5
+      }
+    },
+    {
+      "id": "feedback",
+      "type": "feedback",
+      "inputs": [
+        "warp"
+      ],
+      "params": {
+        "decay": 0.9,
+        "zoom": 1.012
+      }
+    }
   ],
-  "output": "feedback",
-  "modulations": []
+  "output": "feedback"
 }

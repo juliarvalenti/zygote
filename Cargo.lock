@@ -11729,6 +11729,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygote-demo"
+version = "0.1.0"
+dependencies = [
+ "zygote-render",
+]
+
+[[package]]
+name = "zygote-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "zygote-core",
+]
+
+[[package]]
 name = "zygote-render"
 version = "0.1.0"
 dependencies = [
@@ -11737,6 +11755,7 @@ dependencies = [
  "nannou",
  "serde_json",
  "zygote-core",
+ "zygote-macros",
 ]
 
 [[package]]

@@ -1,0 +1,11 @@
+{
+  "name": "demo",
+  "nodes": [
+    { "id": "image", "type": "image", "path": "images/sample.png" },
+    { "id": "warp", "type": "warp", "inputs": ["image"], "params": { "amount": 0.06, "scale": 3.0 } },
+    { "id": "kaleido", "type": "kaleido", "inputs": ["warp"], "params": { "segments": 8, "tint": "#ffe0c0" } },
+    { "id": "trails", "type": "feedback", "inputs": ["kaleido"], "params": { "decay": 0.88, "zoom": 1.015, "rotate": 0.006 } },
+    { "id": "crt", "type": "scanlines", "inputs": ["trails"], "params": { "strength": 0.3 } }
+  ],
+  "output": "crt"
+}

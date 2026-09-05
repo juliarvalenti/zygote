@@ -3,15 +3,15 @@
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
-use zygote_core::{ModContext, ParamPath, ResolvedParams, resolve_params};
+use zygote_core::{ModContext, ParamPath, ParamValue, ResolvedParams, resolve_params};
 
-use crate::plugin::{AudioBandsRes, GraphRes};
+use crate::plugin::{AudioBandsRes, GraphRes, LibraryRes};
 
 #[derive(Resource, Default, Debug)]
 pub struct ParamState {
     /// Values pushed by clients (timeline cues and manual overrides alike).
     /// These win over the graph's own base values.
-    pub overrides: BTreeMap<ParamPath, f32>,
+    pub overrides: BTreeMap<ParamPath, ParamValue>,
     /// Fully resolved values for this frame.
     pub resolved: ResolvedParams,
     /// Last transport state reported by a client, if any.
@@ -27,6 +27,7 @@ pub struct Transport {
 pub fn resolve(
     time: Res<Time>,
     graph: Res<GraphRes>,
+    library: Res<LibraryRes>,
     audio: Res<AudioBandsRes>,
     mut state: ResMut<ParamState>,
 ) {
@@ -35,6 +36,6 @@ pub fn resolve(
         dt: time.delta_secs(),
         audio: **audio,
     };
-    let resolved = resolve_params(&graph, &ctx, &BTreeMap::new(), &state.overrides);
+    let resolved = resolve_params(&graph, &library, &ctx, &BTreeMap::new(), &state.overrides);
     state.resolved = resolved;
 }

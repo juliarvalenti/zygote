@@ -3,11 +3,9 @@
 use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 use bevy::shader::Shader;
-use zygote_core::{AudioBands, DEFAULT_PORT, Graph};
+use zygote_core::{AudioBands, DEFAULT_PORT, Graph, NodeLibrary};
 
-use crate::materials::{
-    BlendMaterial, ColorGradeMaterial, Fallbacks, FeedbackMaterial, GeneratorMaterial, WarpMaterial,
-};
+use crate::materials::{Fallbacks, NodeMaterial};
 use crate::{net, nodes, params, scene};
 
 /// Everything the render process needs to know at startup.
@@ -29,10 +27,13 @@ impl Default for RenderSettings {
     }
 }
 
-/// The loaded graph description. Mutating this at runtime and triggering
-/// [`nodes::rebuild`] is how the pipeline gets reconfigured.
+/// The loaded graph description.
 #[derive(Resource, Clone, Debug, Deref, DerefMut)]
 pub struct GraphRes(pub Graph);
+
+/// Every node kind this renderer knows.
+#[derive(Resource, Clone, Debug, Deref, DerefMut)]
+pub struct LibraryRes(pub NodeLibrary);
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct NodeResolution(pub UVec2);
@@ -44,7 +45,7 @@ impl NodeResolution {
 }
 
 /// Live FFT band energies. Nothing writes to this yet; an audio-analysis
-/// plugin only needs to update it each frame for `AudioBand` modulators to work.
+/// plugin only needs to update it each frame for `audio_band` modulators to work.
 #[derive(Resource, Clone, Copy, Debug, Default, Deref, DerefMut)]
 pub struct AudioBandsRes(pub AudioBands);
 
@@ -65,39 +66,31 @@ pub enum ZygoteSet {
 
 pub struct ZygotePlugin {
     settings: RenderSettings,
+    library: NodeLibrary,
 }
 
 impl ZygotePlugin {
-    pub fn new(settings: RenderSettings) -> Self {
-        Self { settings }
+    pub fn new(settings: RenderSettings, library: NodeLibrary) -> Self {
+        Self { settings, library }
     }
 }
 
 impl Plugin for ZygotePlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/common.wgsl");
-        embedded_asset!(app, "shaders/generator.wgsl");
-        embedded_asset!(app, "shaders/warp.wgsl");
-        embedded_asset!(app, "shaders/blend.wgsl");
-        embedded_asset!(app, "shaders/feedback.wgsl");
-        embedded_asset!(app, "shaders/color_grade.wgsl");
 
-        app.add_plugins((
-            MaterialPlugin::<GeneratorMaterial>::default(),
-            MaterialPlugin::<WarpMaterial>::default(),
-            MaterialPlugin::<BlendMaterial>::default(),
-            MaterialPlugin::<FeedbackMaterial>::default(),
-            MaterialPlugin::<ColorGradeMaterial>::default(),
-        ));
+        app.add_plugins(MaterialPlugin::<NodeMaterial>::default());
 
         app.insert_resource(GraphRes(self.settings.graph.clone()))
+            .insert_resource(LibraryRes(self.library.clone()))
             .insert_resource(NodeResolution(self.settings.resolution))
             .insert_resource(net::NetConfig {
                 port: self.settings.port,
             })
             .init_resource::<AudioBandsRes>()
             .init_resource::<params::ParamState>()
-            .init_resource::<Fallbacks>();
+            .init_resource::<Fallbacks>()
+            .init_resource::<nodes::NodeShaders>();
 
         app.configure_sets(
             Update,
@@ -115,15 +108,20 @@ impl Plugin for ZygotePlugin {
                 .chain(),
         )
         .add_systems(Startup, scene::spawn_display)
-        .add_systems(Update, scene::track_output.after(ZygoteSet::Apply))
         .add_systems(Update, net::poll.in_set(ZygoteSet::Network))
         .add_systems(Update, params::resolve.in_set(ZygoteSet::Resolve))
         .add_systems(
             Update,
-            (nodes::swap_feedback, nodes::rewire, nodes::apply_params)
+            (
+                nodes::hot_reload,
+                nodes::swap_feedback,
+                nodes::rewire,
+                nodes::apply_params,
+            )
                 .chain()
                 .in_set(ZygoteSet::Apply),
-        );
+        )
+        .add_systems(Update, scene::track_output.after(ZygoteSet::Apply));
     }
 }
 

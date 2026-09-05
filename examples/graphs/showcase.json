@@ -1,16 +1,82 @@
 {
   "name": "showcase",
   "nodes": [
-    { "id": "image", "type": "image", "path": "images/sample.png" },
-    { "id": "noise", "type": "noise", "params": { "scale": 2.0, "speed": 0.2 } },
-    { "id": "warp", "type": "warp", "inputs": ["image", "noise"], "params": { "amount": 0.08 } },
-    { "id": "blend", "type": "blend", "mode": "screen", "inputs": ["warp", "noise"], "params": { "mix": 0.25 } },
-    { "id": "feedback", "type": "feedback", "inputs": ["blend"], "params": { "decay": 0.9, "zoom": 1.01, "rotate": 0.005 } },
-    { "id": "grade", "type": "color_grade", "lut": null, "inputs": ["feedback"], "params": { "saturation": 1.2, "palette": 2, "palette_mix": 0.3 } }
+    {
+      "id": "image",
+      "type": "image",
+      "path": "images/sample.png"
+    },
+    {
+      "id": "noise",
+      "type": "noise",
+      "params": {
+        "scale": 2.0,
+        "speed": 0.2
+      }
+    },
+    {
+      "id": "warp",
+      "type": "warp",
+      "inputs": [
+        "image",
+        "noise"
+      ],
+      "params": {
+        "amount": 0.08
+      }
+    },
+    {
+      "id": "blend",
+      "type": "blend",
+      "inputs": [
+        "warp",
+        "noise"
+      ],
+      "params": {
+        "mode": "screen",
+        "mix": 0.25
+      }
+    },
+    {
+      "id": "feedback",
+      "type": "feedback",
+      "inputs": [
+        "blend"
+      ],
+      "params": {
+        "decay": 0.9,
+        "zoom": 1.01,
+        "rotate": 0.005
+      }
+    },
+    {
+      "id": "grade",
+      "type": "color_grade",
+      "inputs": [
+        "feedback"
+      ],
+      "params": {
+        "saturation": 1.2,
+        "preset": "warm",
+        "palette_mix": 0.3
+      }
+    }
   ],
   "output": "grade",
   "modulations": [
-    { "target": "warp.amount", "source": "lfo", "rate_hz": 0.1, "phase": 0.0, "shape": "sine", "depth": 0.05 },
-    { "target": "feedback.hue_shift", "source": "audio_band", "band": 1, "depth": 0.1 }
+    {
+      "target": "warp.amount",
+      "source": "lfo",
+      "rate_hz": 0.1,
+      "phase": 0.0,
+      "shape": "sine",
+      "depth": 0.05
+    },
+    {
+      "target": "feedback.hue_shift",
+      "source": "audio_band",
+      "band": 1,
+      "depth": 0.1
+    }
   ]
 }

@@ -9,7 +9,7 @@ env:
 
 jobs:
   core:
-    name: core tests
+    name: core + macros tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,10 +17,10 @@ jobs:
         with:
           toolchain: "1.98"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p zygote-core
+      - run: cargo test -p zygote-core -p zygote-macros
 
   check:
-    name: check render + timeline
+    name: check engine, UI and demo project
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

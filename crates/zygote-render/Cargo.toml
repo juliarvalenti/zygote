@@ -3,15 +3,25 @@ name = "zygote-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Zygote render process: nannou/Bevy node-graph renderer"
+description = "Zygote render engine: nannou/Bevy node-graph renderer as a library, plus the `zygote` binary"
+
+[lib]
+name = "zygote_render"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zygote"
+path = "src/bin/zygote.rs"
 
 [features]
 default = []
-# Watch embedded WGSL for changes and rebuild pipelines live.
+# Also watch Bevy's embedded assets (the shared WGSL module) for changes.
+# Project node files are always hot-reloaded.
 hot_reload = ["bevy/embedded_watcher", "bevy/file_watcher"]
 
 [dependencies]
 zygote-core.workspace = true
+zygote-macros.workspace = true
 nannou.workspace = true
 bevy = { workspace = true, features = ["bevy_pbr", "bevy_render", "bevy_asset", "bevy_image", "bevy_core_pipeline", "bevy_shader", "bevy_camera", "bevy_light", "bevy_mesh"] }
 serde_json.workspace = true

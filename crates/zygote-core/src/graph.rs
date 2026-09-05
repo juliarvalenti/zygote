@@ -1,16 +1,21 @@
 //! Node graph description.
 //!
 //! A [`Graph`] is an ordered, reconfigurable collection of [`NodeSpec`]s. Each
-//! node has a stable string [`NodeId`], a [`NodeKind`] describing what it does,
-//! a list of input node ids (one per input slot) and a set of parameter
-//! overrides. Every parameter is addressable by a [`ParamPath`] of the form
-//! `node_id.param_name`, which is what the timeline and the wire protocol use.
+//! node has a stable string [`NodeId`], a [`NodeKind`] naming what it is, the
+//! upstream node per input slot and typed parameter values. Every parameter is
+//! addressable by a [`ParamPath`] of the form `node_id.param_name`.
+//!
+//! Graphs are pure data; what a node kind *means* (inputs, parameters, shader)
+//! is looked up in a [`NodeLibrary`].
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+
+use crate::node_def::{NodeDef, NodeLibrary};
+use crate::params::{ParamDescriptor, ParamSpec, ParamValue};
 
 /// Stable identifier of a node inside a [`Graph`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -71,7 +76,6 @@ impl FromStr for ParamPath {
     type Err = GraphError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Split on the *last* dot so node ids may themselves contain dots.
         let (node, param) = s
             .rsplit_once('.')
             .ok_or_else(|| GraphError::InvalidParamPath(s.to_owned()))?;
@@ -95,258 +99,108 @@ impl<'de> Deserialize<'de> for ParamPath {
     }
 }
 
-/// Range and default of a single scalar parameter.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ParamSpec {
-    pub name: &'static str,
-    pub min: f32,
-    pub max: f32,
-    pub default: f32,
-    /// Human readable description shown by inspectors / the timeline UI.
-    pub doc: &'static str,
-}
-
-impl ParamSpec {
-    pub const fn new(
-        name: &'static str,
-        min: f32,
-        max: f32,
-        default: f32,
-        doc: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            min,
-            max,
-            default,
-            doc,
-        }
-    }
-
-    pub fn clamp(&self, value: f32) -> f32 {
-        value.clamp(self.min.min(self.max), self.max.max(self.min))
-    }
-}
-
-/// A parameter together with its full address and current base value.
+/// What a node is.
 ///
-/// This is what the renderer sends to the UI when asked to describe itself, so
-/// the UI can build controls without knowing anything about shaders.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ParamDescriptor {
-    pub path: ParamPath,
-    pub label: String,
-    pub min: f32,
-    pub max: f32,
-    pub default: f32,
-    pub value: f32,
-    pub doc: String,
-}
-
-/// Blend operator used by [`NodeKind::Blend`]. Exposed to the timeline as the
-/// numeric `mode` parameter (see [`BlendMode::from_param`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BlendMode {
-    Multiply,
-    Screen,
-    Add,
-    Alpha,
-}
-
-impl BlendMode {
-    pub fn to_param(self) -> f32 {
-        match self {
-            BlendMode::Multiply => 0.0,
-            BlendMode::Screen => 1.0,
-            BlendMode::Add => 2.0,
-            BlendMode::Alpha => 3.0,
-        }
-    }
-
-    pub fn from_param(value: f32) -> Self {
-        match value.round() as i32 {
-            i32::MIN..=0 => BlendMode::Multiply,
-            1 => BlendMode::Screen,
-            2 => BlendMode::Add,
-            _ => BlendMode::Alpha,
-        }
-    }
-}
-
-const SOLID_PARAMS: &[ParamSpec] = &[
-    ParamSpec::new("r", 0.0, 1.0, 1.0, "Red"),
-    ParamSpec::new("g", 0.0, 1.0, 0.5, "Green"),
-    ParamSpec::new("b", 0.0, 1.0, 0.1, "Blue"),
-];
-const TEST_PATTERN_PARAMS: &[ParamSpec] =
-    &[ParamSpec::new("scale", 1.0, 32.0, 8.0, "Grid density")];
-const NOISE_PARAMS: &[ParamSpec] = &[
-    ParamSpec::new("scale", 0.25, 16.0, 3.0, "Spatial frequency"),
-    ParamSpec::new("speed", 0.0, 4.0, 0.3, "Evolution speed"),
-    ParamSpec::new("octaves", 1.0, 6.0, 4.0, "fBm octaves"),
-    ParamSpec::new("contrast", 0.1, 4.0, 1.0, "Output contrast"),
-];
-const WARP_PARAMS: &[ParamSpec] = &[
-    ParamSpec::new("amount", 0.0, 1.0, 0.15, "Displacement strength (UV units)"),
-    ParamSpec::new(
-        "scale",
-        0.25,
-        16.0,
-        2.0,
-        "Noise frequency of the internal displacement field",
-    ),
-    ParamSpec::new(
-        "speed",
-        0.0,
-        4.0,
-        0.25,
-        "Displacement field evolution speed",
-    ),
-    ParamSpec::new("twist", -3.0, 3.0, 0.0, "Radial twist around the center"),
-];
-const BLEND_PARAMS: &[ParamSpec] = &[
-    ParamSpec::new(
-        "mode",
-        0.0,
-        3.0,
-        1.0,
-        "0 multiply, 1 screen, 2 add, 3 alpha",
-    ),
-    ParamSpec::new("mix", 0.0, 1.0, 1.0, "Opacity of input B"),
-];
-const FEEDBACK_PARAMS: &[ParamSpec] = &[
-    ParamSpec::new("decay", 0.0, 1.0, 0.92, "Previous frame retention"),
-    ParamSpec::new(
-        "zoom",
-        0.9,
-        1.1,
-        1.01,
-        "Per-pass zoom of the previous frame",
-    ),
-    ParamSpec::new("rotate", -0.2, 0.2, 0.004, "Per-pass rotation (radians)"),
-    ParamSpec::new(
-        "hue_shift",
-        -0.5,
-        0.5,
-        0.01,
-        "Per-pass hue rotation (turns)",
-    ),
-    ParamSpec::new(
-        "mix",
-        0.0,
-        1.0,
-        1.0,
-        "How much feedback is composited over the source",
-    ),
-];
-const COLOR_GRADE_PARAMS: &[ParamSpec] = &[
-    ParamSpec::new("hue", -0.5, 0.5, 0.0, "Hue rotation (turns)"),
-    ParamSpec::new("saturation", 0.0, 3.0, 1.0, "Saturation multiplier"),
-    ParamSpec::new("posterize", 0.0, 32.0, 0.0, "Levels per channel, 0 = off"),
-    ParamSpec::new("palette", 0.0, 4.0, 0.0, "Built-in palette index"),
-    ParamSpec::new("palette_mix", 0.0, 1.0, 0.0, "Palette remap amount"),
-    ParamSpec::new(
-        "lut_mix",
-        0.0,
-        1.0,
-        0.0,
-        "LUT remap amount (needs a LUT image)",
-    ),
-];
-
-/// What a node does. Structural configuration (file paths, etc.) lives here;
-/// continuously controllable values are parameters (see [`NodeKind::params`]).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+/// Two structural kinds are CPU-backed sources the renderer implements
+/// itself. Everything else is a [`NodeKind::Shader`]: one fullscreen pass
+/// defined by a [`NodeDef`] in the library (builtin, project file, or Rust).
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
-    /// Static image (PNG/JPEG) loaded from the asset directory.
+    /// Static image (PNG/JPEG) from the asset directory.
     Image { path: String },
-    /// Live camera input. Produces frames only when the renderer is built with
-    /// a capture backend; otherwise it outputs a placeholder.
+    /// Live camera input. Placeholder until a capture backend exists.
     Camera { device: u32 },
-    /// Solid color.
-    Solid,
-    /// Procedural test pattern (color bars + grid + circle).
-    TestPattern,
-    /// Procedural fractal gradient-noise field.
-    Noise,
-    /// UV remapping / domain warp. Inputs: `[source, displacement?]`.
-    Warp,
-    /// Two-input compositing. Inputs: `[a, b]`.
-    Blend { mode: BlendMode },
-    /// Ping-pong feedback with a per-pass transform. Inputs: `[source]`.
-    Feedback,
-    /// Color grading: hue/saturation/posterize plus palette or LUT remap.
-    /// Inputs: `[source]`. `lut` is an optional path to a horizontal LUT strip image.
-    ColorGrade { lut: Option<String> },
+    /// A node definition by name: `"warp"`, `"my_project_node"`, …
+    Shader { node: String },
 }
 
 impl NodeKind {
-    /// Short human readable name.
-    pub fn label(&self) -> &'static str {
+    pub fn shader(node: impl Into<String>) -> Self {
+        NodeKind::Shader { node: node.into() }
+    }
+
+    /// The `type` value used in graph files.
+    pub fn type_name(&self) -> &str {
         match self {
-            NodeKind::Image { .. } => "Image",
-            NodeKind::Camera { .. } => "Camera",
-            NodeKind::Solid => "Solid",
-            NodeKind::TestPattern => "Test Pattern",
-            NodeKind::Noise => "Noise",
-            NodeKind::Warp => "Warp",
-            NodeKind::Blend { .. } => "Blend",
-            NodeKind::Feedback => "Feedback",
-            NodeKind::ColorGrade { .. } => "Color Grade",
+            NodeKind::Image { .. } => "image",
+            NodeKind::Camera { .. } => "camera",
+            NodeKind::Shader { node } => node,
         }
     }
 
-    /// Number of texture inputs the node consumes. Optional inputs count.
-    pub fn input_count(&self) -> usize {
+    /// Short human readable label.
+    pub fn label(&self) -> String {
         match self {
-            NodeKind::Image { .. }
-            | NodeKind::Camera { .. }
-            | NodeKind::Solid
-            | NodeKind::TestPattern
-            | NodeKind::Noise => 0,
-            NodeKind::Warp => 2,
-            NodeKind::Blend { .. } => 2,
-            NodeKind::Feedback => 1,
-            NodeKind::ColorGrade { .. } => 1,
+            NodeKind::Image { path } => format!("image · {path}"),
+            NodeKind::Camera { device } => format!("camera · device {device}"),
+            NodeKind::Shader { node } => node.clone(),
         }
     }
 
-    /// Names of the input slots, in slot order.
-    pub fn input_names(&self) -> &'static [&'static str] {
-        match self {
-            NodeKind::Warp => &["source", "displacement"],
-            NodeKind::Blend { .. } => &["a", "b"],
-            NodeKind::Feedback | NodeKind::ColorGrade { .. } => &["source"],
-            _ => &[],
-        }
+    pub fn is_source(&self) -> bool {
+        matches!(self, NodeKind::Image { .. } | NodeKind::Camera { .. })
     }
 
-    /// Number of inputs that must be connected for the node to be valid.
-    pub fn required_inputs(&self) -> usize {
+    /// Definition of this kind, if it is a shader node the library knows.
+    pub fn def<'l>(&self, library: &'l NodeLibrary) -> Option<&'l NodeDef> {
         match self {
-            NodeKind::Warp => 1,
-            other => other.input_count(),
+            NodeKind::Shader { node } => library.get(node),
+            _ => None,
         }
     }
+}
 
-    /// Parameter specs for this kind of node.
-    pub fn params(&self) -> &'static [ParamSpec] {
-        match self {
-            NodeKind::Image { .. } | NodeKind::Camera { .. } => &[],
-            NodeKind::Solid => SOLID_PARAMS,
-            NodeKind::TestPattern => TEST_PATTERN_PARAMS,
-            NodeKind::Noise => NOISE_PARAMS,
-            NodeKind::Warp => WARP_PARAMS,
-            NodeKind::Blend { .. } => BLEND_PARAMS,
-            NodeKind::Feedback => FEEDBACK_PARAMS,
-            NodeKind::ColorGrade { .. } => COLOR_GRADE_PARAMS,
-        }
+/// File representation: `{"type": "image", "path": ...}`, `{"type": "camera",
+/// "device": 0}` or `{"type": "<node name>"}`.
+#[derive(Serialize, Deserialize)]
+struct KindRepr {
+    #[serde(rename = "type")]
+    ty: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device: Option<u32>,
+}
+
+impl Serialize for NodeKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let repr = match self {
+            NodeKind::Image { path } => KindRepr {
+                ty: "image".into(),
+                path: Some(path.clone()),
+                device: None,
+            },
+            NodeKind::Camera { device } => KindRepr {
+                ty: "camera".into(),
+                path: None,
+                device: Some(*device),
+            },
+            NodeKind::Shader { node } => KindRepr {
+                ty: node.clone(),
+                path: None,
+                device: None,
+            },
+        };
+        repr.serialize(serializer)
     }
+}
 
-    pub fn param(&self, name: &str) -> Option<&'static ParamSpec> {
-        self.params().iter().find(|p| p.name == name)
+impl<'de> Deserialize<'de> for NodeKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let repr = KindRepr::deserialize(deserializer)?;
+        Ok(match repr.ty.as_str() {
+            "image" => NodeKind::Image {
+                path: repr
+                    .path
+                    .ok_or_else(|| serde::de::Error::custom("image node needs `path`"))?,
+            },
+            "camera" => NodeKind::Camera {
+                device: repr.device.unwrap_or(0),
+            },
+            other => NodeKind::Shader {
+                node: other.to_owned(),
+            },
+        })
     }
 }
 
@@ -357,18 +211,22 @@ pub struct NodeSpec {
     #[serde(flatten)]
     pub kind: NodeKind,
     /// Upstream node per input slot, in slot order.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<NodeId>,
-    /// Base parameter values. Missing entries fall back to the spec default.
-    #[serde(default)]
-    pub params: BTreeMap<String, f32>,
+    /// Base parameter values. Missing entries fall back to the definition's default.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, ParamValue>,
     /// A disabled node passes its first input through unchanged.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 impl NodeSpec {
@@ -382,6 +240,10 @@ impl NodeSpec {
         }
     }
 
+    pub fn shader(id: impl Into<NodeId>, node: impl Into<String>) -> Self {
+        Self::new(id, NodeKind::shader(node))
+    }
+
     pub fn with_inputs<I, T>(mut self, inputs: I) -> Self
     where
         I: IntoIterator<Item = T>,
@@ -391,15 +253,9 @@ impl NodeSpec {
         self
     }
 
-    pub fn with_param(mut self, name: &str, value: f32) -> Self {
-        self.params.insert(name.to_owned(), value);
+    pub fn with_param(mut self, name: &str, value: impl Into<ParamValue>) -> Self {
+        self.params.insert(name.to_owned(), value.into());
         self
-    }
-
-    /// Base value of a parameter (override or spec default).
-    pub fn param_value(&self, name: &str) -> Option<f32> {
-        let spec = self.kind.param(name)?;
-        Some(self.params.get(name).copied().unwrap_or(spec.default))
     }
 }
 
@@ -407,6 +263,8 @@ impl NodeSpec {
 pub enum GraphError {
     #[error("unknown node `{0}`")]
     UnknownNode(NodeId),
+    #[error("node `{0}` uses unknown node kind `{1}`")]
+    UnknownKind(NodeId, String),
     #[error("node `{0}` has no parameter `{1}`")]
     UnknownParam(NodeId, String),
     #[error("invalid parameter path `{0}` (expected `node.param`)")]
@@ -425,6 +283,12 @@ pub enum GraphError {
         required: usize,
         given: usize,
     },
+    #[error("node `{node}` accepts {accepted} input(s) but has {given}")]
+    TooManyInputs {
+        node: NodeId,
+        accepted: usize,
+        given: usize,
+    },
     #[error("graph contains a cycle involving `{0}`")]
     Cycle(NodeId),
     #[error("graph output `{0}` does not exist")]
@@ -440,8 +304,35 @@ pub struct Graph {
     /// The node whose texture is shown in the window.
     pub output: NodeId,
     /// Time / LFO / audio modulations applied on top of base values.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modulations: Vec<crate::modulate::Modulation>,
+}
+
+/// UI-facing summary of a graph: what to draw, nothing about how to render it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GraphStructure {
+    pub name: String,
+    pub output: NodeId,
+    pub nodes: Vec<NodeSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NodeSummary {
+    pub id: NodeId,
+    /// Kind label (`warp`, `image · images/x.png`).
+    pub kind: String,
+    pub doc: String,
+    /// One entry per declared input slot.
+    pub inputs: Vec<InputLink>,
+    pub feedback: bool,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputLink {
+    pub name: String,
+    pub optional: bool,
+    pub from: Option<NodeId>,
 }
 
 impl Graph {
@@ -464,13 +355,13 @@ impl Graph {
             },
         ));
         graph.nodes.push(
-            NodeSpec::new("warp", NodeKind::Warp)
+            NodeSpec::shader("warp", "warp")
                 .with_inputs(["image"])
                 .with_param("amount", 0.12)
                 .with_param("scale", 2.5),
         );
         graph.nodes.push(
-            NodeSpec::new("feedback", NodeKind::Feedback)
+            NodeSpec::shader("feedback", "feedback")
                 .with_inputs(["warp"])
                 .with_param("decay", 0.9)
                 .with_param("zoom", 1.012),
@@ -478,7 +369,7 @@ impl Graph {
         graph
     }
 
-    /// A richer demonstration graph exercising every node kind.
+    /// A richer demonstration graph exercising every builtin node.
     pub fn showcase() -> Self {
         let mut graph = Graph::new("showcase", "grade");
         graph.nodes.push(NodeSpec::new(
@@ -489,27 +380,27 @@ impl Graph {
         ));
         graph
             .nodes
-            .push(NodeSpec::new("noise", NodeKind::Noise).with_param("scale", 2.0));
-        graph
-            .nodes
-            .push(NodeSpec::new("warp", NodeKind::Warp).with_inputs(["image", "noise"]));
+            .push(NodeSpec::shader("noise", "noise").with_param("scale", 2.0));
         graph.nodes.push(
-            NodeSpec::new(
-                "blend",
-                NodeKind::Blend {
-                    mode: BlendMode::Screen,
-                },
-            )
-            .with_inputs(["warp", "noise"])
-            .with_param("mix", 0.25),
+            NodeSpec::shader("warp", "warp")
+                .with_inputs(["image", "noise"])
+                .with_param("amount", 0.08),
+        );
+        graph.nodes.push(
+            NodeSpec::shader("blend", "blend")
+                .with_inputs(["warp", "noise"])
+                .with_param("mode", "screen")
+                .with_param("mix", 0.25),
         );
         graph
             .nodes
-            .push(NodeSpec::new("feedback", NodeKind::Feedback).with_inputs(["blend"]));
+            .push(NodeSpec::shader("feedback", "feedback").with_inputs(["blend"]));
         graph.nodes.push(
-            NodeSpec::new("grade", NodeKind::ColorGrade { lut: None })
+            NodeSpec::shader("grade", "color_grade")
                 .with_inputs(["feedback"])
-                .with_param("saturation", 1.2),
+                .with_param("saturation", 1.2)
+                .with_param("preset", "warm")
+                .with_param("palette_mix", 0.3),
         );
         graph.modulations.push(crate::modulate::Modulation {
             target: ParamPath::new("warp", "amount"),
@@ -549,47 +440,86 @@ impl Graph {
         Some(removed)
     }
 
-    /// Set a node's base parameter value (clamped to its spec range).
-    pub fn set_param(&mut self, path: &ParamPath, value: f32) -> Result<f32, GraphError> {
+    /// Definition of a node's kind, or an error naming the node.
+    pub fn def<'l>(
+        &self,
+        library: &'l NodeLibrary,
+        id: &NodeId,
+    ) -> Result<Option<&'l NodeDef>, GraphError> {
+        let node = self
+            .node(id)
+            .ok_or_else(|| GraphError::UnknownNode(id.clone()))?;
+        match &node.kind {
+            NodeKind::Shader { node: name } => library
+                .get(name)
+                .map(Some)
+                .ok_or_else(|| GraphError::UnknownKind(id.clone(), name.clone())),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn param_spec<'l>(
+        &self,
+        library: &'l NodeLibrary,
+        path: &ParamPath,
+    ) -> Result<&'l ParamSpec, GraphError> {
+        let def = self
+            .def(library, &path.node)?
+            .ok_or_else(|| GraphError::UnknownParam(path.node.clone(), path.param.clone()))?;
+        def.param(&path.param)
+            .ok_or_else(|| GraphError::UnknownParam(path.node.clone(), path.param.clone()))
+    }
+
+    /// Set a node's base parameter value (conformed to its type).
+    pub fn set_param(
+        &mut self,
+        library: &NodeLibrary,
+        path: &ParamPath,
+        value: ParamValue,
+    ) -> Result<ParamValue, GraphError> {
+        let value = self.param_spec(library, path)?.conform(&value);
         let node = self
             .node_mut(&path.node)
             .ok_or_else(|| GraphError::UnknownNode(path.node.clone()))?;
-        let spec = node
-            .kind
-            .param(&path.param)
-            .ok_or_else(|| GraphError::UnknownParam(path.node.clone(), path.param.clone()))?;
-        let value = spec.clamp(value);
-        node.params.insert(path.param.clone(), value);
+        node.params.insert(path.param.clone(), value.clone());
         Ok(value)
     }
 
     /// Base value of a parameter (override or default).
-    pub fn param_value(&self, path: &ParamPath) -> Result<f32, GraphError> {
-        let node = self
-            .node(&path.node)
-            .ok_or_else(|| GraphError::UnknownNode(path.node.clone()))?;
-        node.param_value(&path.param)
-            .ok_or_else(|| GraphError::UnknownParam(path.node.clone(), path.param.clone()))
-    }
-
-    pub fn param_spec(&self, path: &ParamPath) -> Option<&'static ParamSpec> {
-        self.node(&path.node)?.kind.param(&path.param)
+    pub fn param_value(
+        &self,
+        library: &NodeLibrary,
+        path: &ParamPath,
+    ) -> Result<ParamValue, GraphError> {
+        let spec = self.param_spec(library, path)?;
+        let node = self.node(&path.node).expect("param_spec checked the node");
+        Ok(node
+            .params
+            .get(&path.param)
+            .map(|v| spec.conform(v))
+            .unwrap_or_else(|| spec.default.clone()))
     }
 
     /// Every addressable parameter in graph order.
-    pub fn describe_params(&self) -> Vec<ParamDescriptor> {
+    pub fn describe_params(&self, library: &NodeLibrary) -> Vec<ParamDescriptor> {
         let mut out = Vec::new();
         for node in &self.nodes {
-            for spec in node.kind.params() {
-                let value = node.params.get(spec.name).copied().unwrap_or(spec.default);
+            let Some(def) = node.kind.def(library) else {
+                continue;
+            };
+            for spec in &def.params {
+                let value = node
+                    .params
+                    .get(&spec.name)
+                    .map(|v| spec.conform(v))
+                    .unwrap_or_else(|| spec.default.clone());
                 out.push(ParamDescriptor {
-                    path: ParamPath::new(node.id.clone(), spec.name),
-                    label: format!("{} · {}", node.id, spec.name),
-                    min: spec.min,
-                    max: spec.max,
-                    default: spec.default,
+                    path: ParamPath::new(node.id.clone(), spec.name.clone()),
+                    node_kind: def.name.clone(),
+                    ty: spec.ty.clone(),
+                    default: spec.default.clone(),
                     value,
-                    doc: spec.doc.to_owned(),
+                    doc: spec.doc.clone(),
                 });
             }
         }
@@ -597,17 +527,63 @@ impl Graph {
     }
 
     /// All base parameter values, keyed by path.
-    pub fn base_values(&self) -> BTreeMap<ParamPath, f32> {
-        self.describe_params()
+    pub fn base_values(&self, library: &NodeLibrary) -> BTreeMap<ParamPath, ParamValue> {
+        self.describe_params(library)
             .into_iter()
             .map(|d| (d.path, d.value))
             .collect()
     }
 
-    /// Structural validation: ids unique, inputs resolvable and sufficient,
-    /// output exists, no cycles. Feedback is internal to the feedback node, so
-    /// a valid graph is always a DAG.
-    pub fn validate(&self) -> Result<(), GraphError> {
+    /// UI-facing structure.
+    pub fn structure(&self, library: &NodeLibrary) -> GraphStructure {
+        let nodes = self
+            .nodes
+            .iter()
+            .map(|node| {
+                let def = node.kind.def(library);
+                let inputs = match def {
+                    Some(def) => def
+                        .inputs
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, input)| InputLink {
+                            name: input.name.clone(),
+                            optional: input.optional,
+                            from: node.inputs.get(slot).cloned(),
+                        })
+                        .collect(),
+                    None => node
+                        .inputs
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, from)| InputLink {
+                            name: format!("in{slot}"),
+                            optional: false,
+                            from: Some(from.clone()),
+                        })
+                        .collect(),
+                };
+                NodeSummary {
+                    id: node.id.clone(),
+                    kind: node.kind.label(),
+                    doc: def.map(|d| d.doc.clone()).unwrap_or_default(),
+                    inputs,
+                    feedback: def.is_some_and(|d| d.feedback),
+                    enabled: node.enabled,
+                }
+            })
+            .collect();
+        GraphStructure {
+            name: self.name.clone(),
+            output: self.output.clone(),
+            nodes,
+        }
+    }
+
+    /// Structural validation against a library: ids unique, kinds known,
+    /// inputs resolvable and within the definition's slots, output exists,
+    /// no cycles. Feedback is internal to a node, so a valid graph is a DAG.
+    pub fn validate(&self, library: &NodeLibrary) -> Result<(), GraphError> {
         let mut seen = BTreeSet::new();
         for node in &self.nodes {
             if !seen.insert(&node.id) {
@@ -624,13 +600,26 @@ impl Graph {
                     });
                 }
             }
-            let required = node.kind.required_inputs();
+            let (required, accepted) = match self.def(library, &node.id)? {
+                Some(def) => (def.required_inputs(), def.inputs.len()),
+                None => (0, 0),
+            };
             if node.inputs.len() < required {
                 return Err(GraphError::MissingInputs {
                     node: node.id.clone(),
                     required,
                     given: node.inputs.len(),
                 });
+            }
+            if node.inputs.len() > accepted {
+                return Err(GraphError::TooManyInputs {
+                    node: node.id.clone(),
+                    accepted,
+                    given: node.inputs.len(),
+                });
+            }
+            for name in node.params.keys() {
+                self.param_spec(library, &ParamPath::new(node.id.clone(), name.clone()))?;
             }
         }
         if self.node(&self.output).is_none() {
@@ -683,8 +672,7 @@ impl Graph {
     }
 
     /// Longest-path depth of every node: sources are 0, a node is one deeper
-    /// than its deepest input. Useful for laying the graph out in columns.
-    /// Requires a valid (acyclic) graph; returns an empty map otherwise.
+    /// than its deepest input. Empty for cyclic graphs.
     pub fn depths(&self) -> BTreeMap<NodeId, usize> {
         let Ok(order) = self.topo_order() else {
             return BTreeMap::new();
@@ -717,26 +705,49 @@ impl Graph {
 mod tests {
     use super::*;
 
+    fn lib() -> NodeLibrary {
+        NodeLibrary::builtin()
+    }
+
     #[test]
     fn param_path_roundtrip() {
         let path: ParamPath = "warp.amount".parse().unwrap();
         assert_eq!(path.node, NodeId::new("warp"));
         assert_eq!(path.param, "amount");
-        assert_eq!(path.to_string(), "warp.amount");
-        let json = serde_json::to_string(&path).unwrap();
-        assert_eq!(json, "\"warp.amount\"");
-        let back: ParamPath = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, path);
+        assert_eq!(serde_json::to_string(&path).unwrap(), "\"warp.amount\"");
         assert!("noparam".parse::<ParamPath>().is_err());
+    }
+
+    #[test]
+    fn kind_serialises_as_type_field() {
+        let spec = NodeSpec::shader("w", "warp").with_inputs(["i"]);
+        let json = serde_json::to_string(&spec).unwrap();
+        assert_eq!(json, r#"{"id":"w","type":"warp","inputs":["i"]}"#);
+        let img = NodeSpec::new(
+            "i",
+            NodeKind::Image {
+                path: "a.png".into(),
+            },
+        );
+        assert_eq!(
+            serde_json::to_string(&img).unwrap(),
+            r#"{"id":"i","type":"image","path":"a.png"}"#
+        );
+        let back: NodeSpec = serde_json::from_str(
+            r#"{"id":"k","type":"nodes/kaleido","params":{"mode":"screen","on":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(back.kind, NodeKind::shader("nodes/kaleido"));
+        assert_eq!(back.params["mode"], ParamValue::Choice("screen".into()));
+        assert_eq!(back.params["on"], ParamValue::Bool(true));
     }
 
     #[test]
     fn first_pass_is_valid_and_ordered() {
         let graph = Graph::first_pass();
-        graph.validate().unwrap();
-        let order = graph.topo_order().unwrap();
+        graph.validate(&lib()).unwrap();
         assert_eq!(
-            order,
+            graph.topo_order().unwrap(),
             vec![
                 NodeId::new("image"),
                 NodeId::new("warp"),
@@ -746,57 +757,100 @@ mod tests {
     }
 
     #[test]
-    fn showcase_is_valid() {
-        Graph::showcase().validate().unwrap();
+    fn showcase_is_valid_and_describes_typed_params() {
+        let graph = Graph::showcase();
+        graph.validate(&lib()).unwrap();
+        let params = graph.describe_params(&lib());
+        let mode = params
+            .iter()
+            .find(|p| p.path == ParamPath::new("blend", "mode"))
+            .unwrap();
+        assert_eq!(mode.value, ParamValue::Choice("screen".into()));
+        assert!(matches!(mode.ty, crate::params::ParamType::Choice { .. }));
+        let depths = graph.depths();
+        assert_eq!(depths[&NodeId::new("grade")], 4);
     }
 
     #[test]
-    fn detects_cycles_and_dangling_inputs() {
+    fn validation_errors() {
         let mut graph = Graph::first_pass();
-        graph.node_mut(&NodeId::new("image")).unwrap().inputs = vec![NodeId::new("feedback")];
-        assert!(matches!(graph.validate(), Err(GraphError::Cycle(_))));
+        graph.node_mut(&NodeId::new("warp")).unwrap().inputs = vec![NodeId::new("feedback")];
+        assert!(matches!(graph.validate(&lib()), Err(GraphError::Cycle(_))));
 
         let mut graph = Graph::first_pass();
         graph.node_mut(&NodeId::new("warp")).unwrap().inputs = vec![NodeId::new("nope")];
         assert!(matches!(
-            graph.validate(),
+            graph.validate(&lib()),
             Err(GraphError::DanglingInput { .. })
+        ));
+
+        let mut graph = Graph::first_pass();
+        graph.node_mut(&NodeId::new("warp")).unwrap().kind = NodeKind::shader("bogus");
+        assert_eq!(
+            graph.validate(&lib()),
+            Err(GraphError::UnknownKind(NodeId::new("warp"), "bogus".into()))
+        );
+
+        let mut graph = Graph::first_pass();
+        graph.node_mut(&NodeId::new("feedback")).unwrap().inputs =
+            vec![NodeId::new("warp"), NodeId::new("image")];
+        assert!(matches!(
+            graph.validate(&lib()),
+            Err(GraphError::TooManyInputs { .. })
+        ));
+
+        let mut graph = Graph::first_pass();
+        graph
+            .node_mut(&NodeId::new("warp"))
+            .unwrap()
+            .params
+            .insert("bogus".into(), ParamValue::Float(1.0));
+        assert!(matches!(
+            graph.validate(&lib()),
+            Err(GraphError::UnknownParam(..))
         ));
     }
 
     #[test]
-    fn set_param_clamps_and_reports_unknowns() {
+    fn set_param_conforms() {
         let mut graph = Graph::first_pass();
         let path = ParamPath::new("warp", "amount");
-        assert_eq!(graph.set_param(&path, 5.0).unwrap(), 1.0);
-        assert_eq!(graph.param_value(&path).unwrap(), 1.0);
         assert_eq!(
-            graph.set_param(&ParamPath::new("warp", "bogus"), 1.0),
-            Err(GraphError::UnknownParam(
-                NodeId::new("warp"),
-                "bogus".into()
-            ))
+            graph
+                .set_param(&lib(), &path, ParamValue::Float(5.0))
+                .unwrap(),
+            ParamValue::Float(1.0)
+        );
+        assert_eq!(
+            graph.param_value(&lib(), &path).unwrap(),
+            ParamValue::Float(1.0)
         );
     }
 
     #[test]
-    fn depths_follow_longest_path() {
-        let graph = Graph::showcase();
-        let depths = graph.depths();
-        assert_eq!(depths[&NodeId::new("image")], 0);
-        assert_eq!(depths[&NodeId::new("noise")], 0);
-        assert_eq!(depths[&NodeId::new("warp")], 1);
-        assert_eq!(depths[&NodeId::new("blend")], 2);
-        assert_eq!(depths[&NodeId::new("feedback")], 3);
-        assert_eq!(depths[&NodeId::new("grade")], 4);
-        assert_eq!(NodeKind::Warp.input_names(), &["source", "displacement"]);
+    fn structure_names_slots() {
+        let s = Graph::showcase().structure(&lib());
+        let warp = s
+            .nodes
+            .iter()
+            .find(|n| n.id == NodeId::new("warp"))
+            .unwrap();
+        assert_eq!(warp.inputs[0].name, "source");
+        assert_eq!(warp.inputs[1].from, Some(NodeId::new("noise")));
+        assert!(warp.inputs[1].optional);
+        assert!(
+            s.nodes
+                .iter()
+                .find(|n| n.id == NodeId::new("feedback"))
+                .unwrap()
+                .feedback
+        );
     }
 
     #[test]
     fn json_roundtrip() {
         let graph = Graph::showcase();
-        let json = graph.to_json().unwrap();
-        let back = Graph::from_json(&json).unwrap();
+        let back = Graph::from_json(&graph.to_json().unwrap()).unwrap();
         assert_eq!(back, graph);
     }
 }

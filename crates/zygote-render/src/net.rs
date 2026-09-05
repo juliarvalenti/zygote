@@ -1,10 +1,10 @@
-//! UDP parameter input.
+//! UDP parameter input (protocol v2).
 
 use bevy::prelude::*;
-use zygote_core::{Message, ParamReceiver};
+use zygote_core::{Message, PROTOCOL_VERSION, ParamPath, ParamReceiver, ParamValue};
 
 use crate::params::{ParamState, Transport};
-use crate::plugin::GraphRes;
+use crate::plugin::{GraphRes, LibraryRes};
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct NetConfig {
@@ -18,45 +18,52 @@ pub fn bind(mut commands: Commands, config: Res<NetConfig>) {
     match ParamReceiver::bind(config.port) {
         Ok(rx) => {
             info!(
-                "listening for parameter messages on udp://127.0.0.1:{}",
+                "listening for parameter messages on udp://127.0.0.1:{} (protocol {PROTOCOL_VERSION})",
                 config.port
             );
             commands.insert_resource(Net(rx));
         }
         Err(e) => {
             error!(
-                "could not bind udp port {}: {e}. Parameters can only be changed from the graph file.",
+                "could not bind udp port {}: {e}. Is another renderer running? Pass --port to use a different one.",
                 config.port
             );
         }
     }
 }
 
-pub fn poll(net: Option<ResMut<Net>>, graph: Res<GraphRes>, mut state: ResMut<ParamState>) {
+pub fn poll(
+    net: Option<ResMut<Net>>,
+    graph: Res<GraphRes>,
+    library: Res<LibraryRes>,
+    mut state: ResMut<ParamState>,
+) {
     let Some(mut net) = net else { return };
     for (msg, from) in net.0.poll() {
         match msg {
-            Message::Hello { client } => {
-                info!("client `{client}` connected from {from}");
-                let structure = Message::Graph {
-                    graph: graph.0.clone(),
-                };
+            Message::Hello { client, protocol } => {
+                if protocol != PROTOCOL_VERSION {
+                    warn!(
+                        "client `{client}` speaks protocol {protocol}, this renderer speaks {PROTOCOL_VERSION}; describing anyway"
+                    );
+                } else {
+                    info!("client `{client}` connected from {from}");
+                }
+                let structure = Message::structure(graph.structure(&library));
                 if let Err(e) = net.0.send_to(&structure, from) {
                     warn!("failed to send graph structure to {from}: {e}");
                 }
-                let params = graph.describe_params();
+                let params = graph.describe_params(&library);
                 for chunk in Message::describe(&graph.name, &params) {
                     if let Err(e) = net.0.send_to(&chunk, from) {
                         warn!("failed to describe graph to {from}: {e}");
                     }
                 }
             }
-            Message::SetParam { path, value } => {
-                set(&graph, &mut state, path, value);
-            }
+            Message::SetParam { path, value } => set(&graph, &library, &mut state, path, value),
             Message::SetParams { values } => {
                 for (path, value) in values {
-                    set(&graph, &mut state, path, value);
+                    set(&graph, &library, &mut state, path, value);
                 }
             }
             Message::ClearParam { path } => {
@@ -66,16 +73,27 @@ pub fn poll(net: Option<ResMut<Net>>, graph: Res<GraphRes>, mut state: ResMut<Pa
             Message::Transport { time, playing } => {
                 state.transport = Some(Transport { time, playing });
             }
-            Message::Describe { .. } | Message::Graph { .. } => {}
+            Message::Ping => {
+                if let Err(e) = net.0.send_to(&Message::pong(), from) {
+                    debug!("failed to answer ping from {from}: {e}");
+                }
+            }
+            Message::Describe { .. } | Message::Structure { .. } | Message::Pong { .. } => {}
         }
     }
 }
 
-fn set(graph: &GraphRes, state: &mut ParamState, path: zygote_core::ParamPath, value: f32) {
-    match graph.param_spec(&path) {
-        Some(spec) => {
-            state.overrides.insert(path, spec.clamp(value));
+fn set(
+    graph: &GraphRes,
+    library: &LibraryRes,
+    state: &mut ParamState,
+    path: ParamPath,
+    value: ParamValue,
+) {
+    match graph.param_spec(library, &path) {
+        Ok(spec) => {
+            state.overrides.insert(path, spec.conform(&value));
         }
-        None => debug!("ignoring unknown parameter `{path}`"),
+        Err(_) => debug!("ignoring unknown parameter `{path}`"),
     }
 }
