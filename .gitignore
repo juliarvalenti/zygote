@@ -1,0 +1,5 @@
+/target
+/target-core
+*.png
+!crates/zygote-render/assets/**/*.png
+zygote-timeline.json

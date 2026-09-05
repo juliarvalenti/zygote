@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zygote-core",
+    "crates/zygote-render",
+    "crates/zygote-timeline",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+zygote-core = { path = "crates/zygote-core" }
+# nannou 0.20 is the first Bevy-based release; it pins bevy 0.19.
+# Pinned with "=" so cargo does not silently move us onto a newer nannou/Bevy pair.
+nannou = { version = "=0.20.0" }
+bevy = { version = "=0.19.1", default-features = false }
+# gpui-kit 0.6 is built on the gpui-pre 0.3.x snapshot of Zed's gpui.
+gpui-kit = { version = "=0.6.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

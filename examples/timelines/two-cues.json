@@ -1,0 +1,15 @@
+{
+  "cues": [
+    {
+      "id": 1, "time": 0.0, "label": "Cue 1", "transition": "cut",
+      "values": { "warp.amount": 0.04, "warp.twist": 0.0, "feedback.decay": 0.8, "feedback.zoom": 1.0, "feedback.rotate": 0.0 }
+    },
+    {
+      "id": 2, "time": 4.0, "label": "Cue 2", "transition": "interpolate",
+      "values": { "warp.amount": 0.3, "warp.twist": 1.2, "feedback.decay": 0.95, "feedback.zoom": 1.025, "feedback.rotate": 0.012 }
+    }
+  ],
+  "duration": 8.0,
+  "looping": true,
+  "next_id": 3
+}
