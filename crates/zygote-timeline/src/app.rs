@@ -19,6 +19,13 @@ const TICK: Duration = Duration::from_millis(33);
 /// built-in first-pass graph for the parameter list.
 const DESCRIBE_TIMEOUT: Duration = Duration::from_millis(1500);
 const TIMELINE_HEIGHT: f32 = 110.0;
+const NODE_W: f32 = 168.0;
+const NODE_H: f32 = 46.0;
+const COL_GAP: f32 = 48.0;
+const ROW_GAP: f32 = 14.0;
+const GRAPH_PAD: f32 = 16.0;
+/// Height of the pannable graph viewport.
+const GRAPH_VIEW_H: f32 = 150.0;
 
 struct Options {
     file: PathBuf,
@@ -96,6 +103,15 @@ enum Drag {
 
 pub struct TimelineApp {
     file: PathBuf,
+    /// Structure of the renderer's graph, drawn read-only above the axis.
+    graph: Option<Graph>,
+    /// Pan offset of the graph surface inside its viewport, in pixels.
+    graph_pan: Point<f32>,
+    /// Mouse position and pan at the start of a graph drag.
+    graph_drag: Option<(Point<Pixels>, Point<f32>)>,
+    graph_viewport: Rc<Cell<Bounds<Pixels>>>,
+    /// Set when a new graph arrives so the next render centres it.
+    graph_fit_pending: bool,
     timeline: Timeline,
     playhead: f32,
     playing: bool,
@@ -146,6 +162,11 @@ impl TimelineApp {
 
         let mut this = Self {
             file: options.file,
+            graph: None,
+            graph_pan: Point::default(),
+            graph_drag: None,
+            graph_viewport: Rc::new(Cell::new(Bounds::default())),
+            graph_fit_pending: true,
             timeline,
             playhead: 0.0,
             playing: false,
@@ -328,25 +349,31 @@ impl TimelineApp {
         let mut installed = None;
         if let Some(sender) = &mut self.sender {
             for msg in sender.poll() {
-                if let Message::Describe {
-                    graph,
-                    chunk,
-                    chunks,
-                    params,
-                } = msg
-                {
-                    if chunk == 0 {
-                        self.describe_buffer.clear();
+                match msg {
+                    Message::Graph { graph } => {
+                        self.graph = Some(graph);
+                        self.graph_fit_pending = true;
                     }
-                    self.describe_buffer.extend(params);
-                    if chunk + 1 == chunks {
-                        self.described = true;
-                        self.status = format!(
-                            "connected to renderer · graph `{graph}` · {} parameters",
-                            self.describe_buffer.len()
-                        );
-                        installed = Some(std::mem::take(&mut self.describe_buffer));
+                    Message::Describe {
+                        graph,
+                        chunk,
+                        chunks,
+                        params,
+                    } => {
+                        if chunk == 0 {
+                            self.describe_buffer.clear();
+                        }
+                        self.describe_buffer.extend(params);
+                        if chunk + 1 == chunks {
+                            self.described = true;
+                            self.status = format!(
+                                "connected to renderer · graph `{graph}` · {} parameters",
+                                self.describe_buffer.len()
+                            );
+                            installed = Some(std::mem::take(&mut self.describe_buffer));
+                        }
                     }
+                    _ => {}
                 }
             }
         }
@@ -363,7 +390,10 @@ impl TimelineApp {
                 "{} · renderer not answering, using built-in first-pass parameter list",
                 self.status
             );
-            self.install_params(Graph::first_pass().describe_params(), window, cx);
+            let fallback = Graph::first_pass();
+            self.install_params(fallback.describe_params(), window, cx);
+            self.graph = Some(fallback);
+            self.graph_fit_pending = true;
             self.described = true;
         }
     }
@@ -795,6 +825,332 @@ impl TimelineApp {
             .into_any_element()
     }
 
+    // ---- graph viewport ------------------------------------------------------
+
+    fn graph_mouse_down(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.graph_drag = Some((ev.position, self.graph_pan));
+        cx.notify();
+    }
+
+    fn graph_mouse_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if let Some((start, pan)) = self.graph_drag {
+            let dx: f32 = (ev.position.x - start.x).into();
+            let dy: f32 = (ev.position.y - start.y).into();
+            self.graph_pan = point(pan.x + dx, pan.y + dy);
+            cx.notify();
+        }
+    }
+
+    fn graph_mouse_up(&mut self, cx: &mut Context<Self>) {
+        self.graph_drag = None;
+        cx.notify();
+    }
+
+    fn graph_scroll(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        let delta = ev.delta.pixel_delta(px(24.));
+        let dx: f32 = delta.x.into();
+        let dy: f32 = delta.y.into();
+        // Plain wheel scrolls the chain horizontally; shift (or a trackpad's
+        // horizontal axis) moves it the other way.
+        if ev.modifiers.shift {
+            self.graph_pan = point(self.graph_pan.x + dy, self.graph_pan.y + dx);
+        } else {
+            self.graph_pan = point(self.graph_pan.x + dx + dy, self.graph_pan.y);
+        }
+        cx.notify();
+    }
+
+    /// Centre the graph in its viewport (left-aligned when it is wider).
+    fn graph_fit(&mut self, content: (f32, f32), cx: &mut Context<Self>) {
+        let viewport = self.graph_viewport.get();
+        let vw: f32 = viewport.size.width.into();
+        let vh: f32 = viewport.size.height.into();
+        if vw <= 0.0 {
+            return;
+        }
+        let x = if content.0 <= vw {
+            (vw - content.0) / 2.0
+        } else {
+            0.0
+        };
+        let y = ((vh - content.1) / 2.0).max(0.0);
+        self.graph_pan = point(x, y);
+        self.graph_fit_pending = false;
+        cx.notify();
+    }
+
+    /// Read-only picture of the renderer's node graph: sources on the left,
+    /// the output on the right, one column per dependency depth.
+    fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let Some(graph) = self.graph.clone() else {
+            return div()
+                .h(px(GRAPH_VIEW_H))
+                .flex()
+                .items_center()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child("waiting for the renderer to send its graph…")
+                .into_any_element();
+        };
+
+        // Layout: column = depth, row = position within that column, in graph order.
+        let depths = graph.depths();
+        let mut rows_in_col: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut placed: BTreeMap<zygote_core::NodeId, (usize, usize)> = BTreeMap::new();
+        for node in &graph.nodes {
+            let col = depths.get(&node.id).copied().unwrap_or(0);
+            let row = rows_in_col.entry(col).or_insert(0);
+            placed.insert(node.id.clone(), (col, *row));
+            *row += 1;
+        }
+        let cols = rows_in_col.keys().max().map(|c| c + 1).unwrap_or(1);
+        let rows = rows_in_col.values().copied().max().unwrap_or(1);
+        // One extra column for the window the output feeds.
+        let width = GRAPH_PAD * 2.0 + (cols as f32 + 1.0) * NODE_W + cols as f32 * COL_GAP;
+        let height =
+            GRAPH_PAD * 2.0 + rows as f32 * NODE_H + (rows as f32 - 1.0).max(0.0) * ROW_GAP;
+        if self.graph_fit_pending {
+            self.graph_fit((width, height), cx);
+        }
+        let pan = self.graph_pan;
+        let theme = cx.theme();
+        let pos = |col: usize, row: usize| -> (f32, f32) {
+            (
+                GRAPH_PAD + col as f32 * (NODE_W + COL_GAP),
+                GRAPH_PAD + row as f32 * (NODE_H + ROW_GAP),
+            )
+        };
+
+        // Edges are drawn on a canvas underneath the boxes. Collect them as
+        // (from right-middle, to left edge at the slot's height).
+        let mut edges: Vec<((f32, f32), (f32, f32))> = Vec::new();
+        for node in &graph.nodes {
+            let Some(&(col, row)) = placed.get(&node.id) else {
+                continue;
+            };
+            let (x, y) = pos(col, row);
+            let slots = node.inputs.len().max(1) as f32;
+            for (slot, input) in node.inputs.iter().enumerate() {
+                let Some(&(icol, irow)) = placed.get(input) else {
+                    continue;
+                };
+                let (ix, iy) = pos(icol, irow);
+                let slot_y = y + NODE_H * (slot as f32 + 1.0) / (slots + 1.0);
+                edges.push(((ix + NODE_W, iy + NODE_H / 2.0), (x, slot_y)));
+            }
+        }
+        // Output → window.
+        let window_col = cols;
+        if let Some(&(col, row)) = placed.get(&graph.output) {
+            let (x, y) = pos(col, row);
+            let (wx, wy) = pos(window_col, 0);
+            edges.push(((x + NODE_W, y + NODE_H / 2.0), (wx, wy + NODE_H / 2.0)));
+        }
+
+        let edge_color = theme.muted_foreground.opacity(0.7);
+        let mut view = div()
+            .relative()
+            .w(px(width))
+            .h(px(height))
+            .flex_shrink_0()
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        for ((fx, fy), (tx, ty)) in edges {
+                            let from = bounds.origin + point(px(fx), px(fy));
+                            let to = bounds.origin + point(px(tx), px(ty));
+                            let dx = (to.x - from.x) * 0.5;
+                            let mut path = PathBuilder::stroke(px(1.5));
+                            path.move_to(from);
+                            path.cubic_bezier_to(
+                                to,
+                                point(from.x + dx, from.y),
+                                point(to.x - dx, to.y),
+                            );
+                            if let Ok(path) = path.build() {
+                                window.paint_path(path, edge_color);
+                            }
+                            // Arrow head.
+                            let mut head = PathBuilder::fill();
+                            head.move_to(to);
+                            head.line_to(point(to.x - px(7.), to.y - px(4.)));
+                            head.line_to(point(to.x - px(7.), to.y + px(4.)));
+                            head.close();
+                            if let Ok(head) = head.build() {
+                                window.paint_path(head, edge_color);
+                            }
+                        }
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            );
+
+        for node in &graph.nodes {
+            let Some(&(col, row)) = placed.get(&node.id) else {
+                continue;
+            };
+            let (x, y) = pos(col, row);
+            let is_output = node.id == graph.output;
+            let is_source = node.inputs.is_empty();
+            let slot_names = node.kind.input_names();
+            let mut slots = v_flex().justify_around().h_full().pr_1();
+            for (i, name) in slot_names.iter().enumerate() {
+                let connected = node.inputs.get(i).is_some();
+                slots = slots.child(
+                    div()
+                        .text_xs()
+                        .text_color(if connected {
+                            theme.muted_foreground
+                        } else {
+                            theme.muted_foreground.opacity(0.4)
+                        })
+                        .child(*name),
+                );
+            }
+            view = view.child(
+                h_flex()
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(NODE_W))
+                    .h(px(NODE_H))
+                    .px_2()
+                    .gap_1()
+                    .items_center()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if is_output {
+                        theme.primary
+                    } else {
+                        theme.border
+                    })
+                    .bg(if is_source {
+                        theme.muted
+                    } else {
+                        theme.background
+                    })
+                    .when(!node.enabled, |d| d.opacity(0.45))
+                    .when(!slot_names.is_empty(), |d| d.child(slots))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .truncate()
+                                    .text_color(theme.foreground)
+                                    .child(node.id.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .truncate()
+                                    .text_color(theme.muted_foreground)
+                                    .child(kind_summary(&node.kind)),
+                            ),
+                    ),
+            );
+        }
+
+        // The window the output feeds.
+        let (wx, wy) = pos(window_col, 0);
+        view = view.child(
+            v_flex()
+                .absolute()
+                .left(px(wx))
+                .top(px(wy))
+                .w(px(NODE_W))
+                .h(px(NODE_H))
+                .px_2()
+                .justify_center()
+                .rounded_md()
+                .border_1()
+                .border_dashed()
+                .border_color(theme.primary)
+                .child(
+                    div()
+                        .text_sm()
+                        .truncate()
+                        .text_color(theme.foreground)
+                        .child("window"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .truncate()
+                        .text_color(theme.muted_foreground)
+                        .child("3D quad · perspective camera"),
+                ),
+        );
+
+        let viewport_cell = self.graph_viewport.clone();
+        let content = (width, height);
+        div()
+            .id("graph-viewport")
+            .relative()
+            .w_full()
+            .h(px(GRAPH_VIEW_H))
+            .overflow_hidden()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.muted.opacity(0.2))
+            .cursor_grab()
+            .child(
+                canvas(
+                    move |bounds, _, _| viewport_cell.set(bounds),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(view.absolute().left(px(pan.x)).top(px(pan.y)))
+            .child(
+                h_flex()
+                    .absolute()
+                    .top_1()
+                    .right_1()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(format!(
+                                "{} nodes · drag or scroll to pan",
+                                graph.nodes.len()
+                            )),
+                    )
+                    .child(
+                        Button::new("graph-fit").xsmall().label("Fit").on_click(
+                            cx.listener(move |this, _, _, cx| this.graph_fit(content, cx)),
+                        ),
+                    ),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, _, cx| this.graph_mouse_down(ev, cx)),
+            )
+            .on_mouse_move(
+                cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.graph_mouse_move(ev, cx)),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.graph_mouse_up(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.graph_mouse_up(cx)),
+            )
+            .on_scroll_wheel(
+                cx.listener(|this, ev: &ScrollWheelEvent, _, cx| this.graph_scroll(ev, cx)),
+            )
+            .into_any_element()
+    }
+
     fn render_params(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let values = self.effective_values();
@@ -807,8 +1163,37 @@ impl TimelineApp {
                     .child("waiting for the renderer to describe its graph…"),
             );
         }
+        let mut last_node: Option<zygote_core::NodeId> = None;
         for (i, control) in self.params.iter().enumerate() {
             let path = control.desc.path.clone();
+            if last_node.as_ref() != Some(&path.node) {
+                last_node = Some(path.node.clone());
+                let kind = self
+                    .graph
+                    .as_ref()
+                    .and_then(|g| g.node(&path.node))
+                    .map(|n| kind_summary(&n.kind))
+                    .unwrap_or_default();
+                list = list.child(
+                    h_flex()
+                        .gap_2()
+                        .items_baseline()
+                        .px_2()
+                        .pt_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.foreground)
+                                .child(path.node.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(kind),
+                        ),
+                );
+            }
             let overridden = self.overrides.contains_key(&path);
             let value = values.get(&path).copied().unwrap_or(control.desc.value);
             let label_color = if overridden {
@@ -827,9 +1212,10 @@ impl TimelineApp {
                     .child(
                         div()
                             .w(px(190.))
+                            .pl_3()
                             .text_sm()
                             .text_color(label_color)
-                            .child(control.desc.label.clone()),
+                            .child(path.param.clone()),
                     )
                     .child(Slider::new(&control.slider).flex_1())
                     .child(
@@ -874,6 +1260,7 @@ impl Render for TimelineApp {
                     .on_click(cx.listener(|this, _, window, cx| this.release_all(window, cx))),
             );
         let transport = self.render_transport(cx);
+        let graph = self.render_graph(cx);
         let axis = self.render_axis(cx);
         let cue_bar = self.render_cue_bar(cx);
         let params = self.render_params(cx);
@@ -885,6 +1272,7 @@ impl Render for TimelineApp {
             .p_4()
             .gap_3()
             .child(header)
+            .child(graph)
             .child(transport)
             .child(axis)
             .child(cue_bar)
@@ -903,6 +1291,18 @@ impl Render for TimelineApp {
                     .child(params),
             )
             .child(div().text_xs().text_color(muted).child(self.status.clone()))
+    }
+}
+
+/// Short description of a node kind for the graph view and param headers.
+fn kind_summary(kind: &zygote_core::NodeKind) -> String {
+    use zygote_core::NodeKind;
+    match kind {
+        NodeKind::Image { path } => format!("image · {path}"),
+        NodeKind::Camera { device } => format!("camera · device {device}"),
+        NodeKind::Blend { mode } => format!("blend · {mode:?}").to_lowercase(),
+        NodeKind::ColorGrade { lut: Some(lut) } => format!("color grade · lut {lut}"),
+        other => other.label().to_lowercase(),
     }
 }
 

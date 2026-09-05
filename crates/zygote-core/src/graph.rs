@@ -313,6 +313,16 @@ impl NodeKind {
         }
     }
 
+    /// Names of the input slots, in slot order.
+    pub fn input_names(&self) -> &'static [&'static str] {
+        match self {
+            NodeKind::Warp => &["source", "displacement"],
+            NodeKind::Blend { .. } => &["a", "b"],
+            NodeKind::Feedback | NodeKind::ColorGrade { .. } => &["source"],
+            _ => &[],
+        }
+    }
+
     /// Number of inputs that must be connected for the node to be valid.
     pub fn required_inputs(&self) -> usize {
         match self {
@@ -672,6 +682,28 @@ impl Graph {
         Ok(order)
     }
 
+    /// Longest-path depth of every node: sources are 0, a node is one deeper
+    /// than its deepest input. Useful for laying the graph out in columns.
+    /// Requires a valid (acyclic) graph; returns an empty map otherwise.
+    pub fn depths(&self) -> BTreeMap<NodeId, usize> {
+        let Ok(order) = self.topo_order() else {
+            return BTreeMap::new();
+        };
+        let mut depths: BTreeMap<NodeId, usize> = BTreeMap::new();
+        for id in order {
+            let node = self.node(&id).expect("ordered node exists");
+            let depth = node
+                .inputs
+                .iter()
+                .filter_map(|input| depths.get(input))
+                .map(|d| d + 1)
+                .max()
+                .unwrap_or(0);
+            depths.insert(id, depth);
+        }
+        depths
+    }
+
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
@@ -745,6 +777,19 @@ mod tests {
                 "bogus".into()
             ))
         );
+    }
+
+    #[test]
+    fn depths_follow_longest_path() {
+        let graph = Graph::showcase();
+        let depths = graph.depths();
+        assert_eq!(depths[&NodeId::new("image")], 0);
+        assert_eq!(depths[&NodeId::new("noise")], 0);
+        assert_eq!(depths[&NodeId::new("warp")], 1);
+        assert_eq!(depths[&NodeId::new("blend")], 2);
+        assert_eq!(depths[&NodeId::new("feedback")], 3);
+        assert_eq!(depths[&NodeId::new("grade")], 4);
+        assert_eq!(NodeKind::Warp.input_names(), &["source", "displacement"]);
     }
 
     #[test]

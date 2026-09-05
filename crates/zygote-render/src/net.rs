@@ -38,6 +38,12 @@ pub fn poll(net: Option<ResMut<Net>>, graph: Res<GraphRes>, mut state: ResMut<Pa
         match msg {
             Message::Hello { client } => {
                 info!("client `{client}` connected from {from}");
+                let structure = Message::Graph {
+                    graph: graph.0.clone(),
+                };
+                if let Err(e) = net.0.send_to(&structure, from) {
+                    warn!("failed to send graph structure to {from}: {e}");
+                }
                 let params = graph.describe_params();
                 for chunk in Message::describe(&graph.name, &params) {
                     if let Err(e) = net.0.send_to(&chunk, from) {
@@ -60,7 +66,7 @@ pub fn poll(net: Option<ResMut<Net>>, graph: Res<GraphRes>, mut state: ResMut<Pa
             Message::Transport { time, playing } => {
                 state.transport = Some(Transport { time, playing });
             }
-            Message::Describe { .. } => {}
+            Message::Describe { .. } | Message::Graph { .. } => {}
         }
     }
 }

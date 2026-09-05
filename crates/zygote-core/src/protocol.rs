@@ -10,7 +10,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{ParamDescriptor, ParamPath};
+use crate::graph::{Graph, ParamDescriptor, ParamPath};
 
 /// Default UDP port the renderer listens on.
 pub const DEFAULT_PORT: u16 = 9471;
@@ -24,6 +24,9 @@ pub const MAX_DATAGRAM: usize = 60 * 1024;
 pub enum Message {
     /// UI → renderer: announce yourself and ask for a description.
     Hello { client: String },
+    /// Renderer → UI: the structure of the loaded graph (nodes, kinds,
+    /// wiring, output). Sent before `Describe` so the UI can draw the chain.
+    Graph { graph: Graph },
     /// Renderer → UI: the parameters of the loaded graph. May arrive in
     /// several chunks (`chunk` of `chunks`).
     Describe {
@@ -182,6 +185,15 @@ mod tests {
             r#"{"msg":"set_param","path":"warp.amount","value":0.25}"#
         );
         assert_eq!(Message::decode(&bytes).unwrap(), msg);
+    }
+
+    #[test]
+    fn graph_message_fits_a_datagram() {
+        let msg = Message::Graph {
+            graph: Graph::showcase(),
+        };
+        assert!(msg.encode().len() < MAX_DATAGRAM);
+        assert_eq!(Message::decode(&msg.encode()).unwrap(), msg);
     }
 
     #[test]
