@@ -160,6 +160,7 @@ impl ZygoteApp {
         self.capture = Some(CaptureSettings {
             path: path.into(),
             frame,
+            every: 0,
         });
         self
     }
@@ -168,12 +169,13 @@ impl ZygoteApp {
     ///
     /// ```text
     /// [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR]
-    /// [--showcase] [--capture out.png [--frames N]]
+    /// [--showcase] [--capture out.png [--frames N] [--every K]]
     /// ```
     pub fn parse_args(mut self) -> Self {
         let mut args = std::env::args().skip(1);
         let mut capture_path: Option<String> = None;
         let mut capture_frame: u64 = 120;
+        let mut capture_every: u64 = 0;
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--port" => {
@@ -214,6 +216,12 @@ impl ZygoteApp {
                         .and_then(|p| p.parse().ok())
                         .unwrap_or_else(|| usage("--frames needs a number"));
                 }
+                "--every" => {
+                    capture_every = args
+                        .next()
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or_else(|| usage("--every needs a number"));
+                }
                 "--showcase" => {
                     self.settings.graph = Graph::showcase();
                     self.graph_file = None;
@@ -227,6 +235,7 @@ impl ZygoteApp {
             self.capture = Some(CaptureSettings {
                 path,
                 frame: capture_frame,
+                every: capture_every,
             });
         }
         self
@@ -295,7 +304,7 @@ fn usage(error: &str) -> ! {
         eprintln!("error: {error}\n");
     }
     eprintln!(
-        "usage: <project> [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR] [--showcase] [--capture out.png [--frames N]]"
+        "usage: <project> [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR] [--showcase] [--capture out.png [--frames N] [--every K]]"
     );
     std::process::exit(if error.is_empty() { 0 } else { 2 });
 }

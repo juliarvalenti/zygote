@@ -11736,6 +11736,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygote-haze"
+version = "0.1.0"
+dependencies = [
+ "zygote-render",
+]
+
+[[package]]
 name = "zygote-macros"
 version = "0.1.0"
 dependencies = [

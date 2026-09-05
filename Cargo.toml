@@ -6,6 +6,7 @@ members = [
     "crates/zygote-render",
     "crates/zygote-timeline",
     "projects/demo",
+    "projects/haze",
 ]
 
 [workspace.package]

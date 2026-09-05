@@ -477,11 +477,11 @@ fn parse_param(args: &str) -> Result<ParamSpec, String> {
 /// Split a trailing `"doc string"` off a header line.
 fn split_doc(args: &str) -> (&str, String) {
     let trimmed = args.trim_end();
-    if trimmed.ends_with('"') {
-        if let Some(open) = trimmed[..trimmed.len() - 1].rfind('"') {
-            let doc = trimmed[open + 1..trimmed.len() - 1].to_owned();
-            return (trimmed[..open].trim_end(), doc);
-        }
+    if let Some(body) = trimmed.strip_suffix('"')
+        && let Some(open) = body.rfind('"')
+    {
+        let doc = body[open + 1..].to_owned();
+        return (trimmed[..open].trim_end(), doc);
     }
     (trimmed, String::new())
 }

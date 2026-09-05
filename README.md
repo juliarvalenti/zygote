@@ -20,14 +20,16 @@ own nodes in Rust or WGSL.
 | `crates/zygote-render` | The engine as a library (nannou 0.20 / Bevy 0.19) plus the stock `zygote` binary. One generic shader-node material; node code never touches Bevy. |
 | `crates/zygote-timeline` | gpui-kit window: graph view, transport, cue axis, typed controls per parameter. Knows nothing about shaders. |
 | `projects/demo` | A project consuming the engine: one Rust-declared node, one WGSL-file node, its own graph and assets. |
+| `projects/haze` | Proof-of-concept show: monochrome pulsing geometry and noise haze from a central point, three WGSL nodes. |
 
-| demo project (kaleido + scanlines are project nodes) | timeline UI driving it |
-| --- | --- |
-| ![](docs/render-demo.png) | ![](docs/timeline-ui.png) |
+| `projects/haze` | `projects/demo` (kaleido + scanlines are project nodes) | timeline UI |
+| --- | --- | --- |
+| ![](docs/render-haze.png) | ![](docs/render-demo.png) | ![](docs/timeline-ui.png) |
 
 ## Running
 
 ```sh
+cargo run --release -p zygote-haze        # monochrome proof of concept
 cargo run --release -p zygote-demo        # a project: image → warp → kaleido → feedback → scanlines
 cargo run --release -p zygote-timeline    # the UI; connects to udp://127.0.0.1:9471
 cargo run --release -p zygote -- --showcase   # stock renderer, builtin nodes only
@@ -41,8 +43,8 @@ parameter until released; manual always beats the cues. If the renderer is
 restarted the UI notices, re-describes, and re-pushes its state.
 
 Renderer options: `[graph.json] [--port N] [--size WxH] [--assets DIR]
-[--nodes DIR] [--showcase] [--capture out.png [--frames N]]`. Keys: `S`
-screenshot, `Esc` quit.
+[--nodes DIR] [--showcase] [--capture out.png [--frames N] [--every K]]`
+(`--every` saves a numbered frame sequence). Keys: `S` screenshot, `Esc` quit.
 
 ## What a node is
 
