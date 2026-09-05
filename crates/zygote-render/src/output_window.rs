@@ -1,6 +1,6 @@
 //! The output window and its perspective camera, plus the keep-alive that
 //! re-creates the window if the OS takes it away (monitor unplugged, dock
-//! sleep).
+//! sleep). A close request from the user is a quit, not a loss.
 //!
 //! Navigation in the output window: wheel dollies in and out, left-drag pans,
 //! right-drag orbits around the display quad, arrow keys pan, `+`/`-` dolly,
@@ -12,7 +12,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-use bevy::window::{PrimaryWindow, WindowRef};
+use bevy::window::{PrimaryWindow, WindowCloseRequested, WindowRef};
 
 use crate::{CAMERA_DISTANCE, CAMERA_FOV};
 
@@ -21,16 +21,43 @@ pub struct OutputWindowPlugin;
 impl Plugin for OutputWindowPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<View>()
+            .init_resource::<Quitting>()
             .add_systems(Startup, spawn_output)
             .add_systems(
                 Update,
-                (keep_window_alive, keys, navigate, apply_view).chain(),
+                (
+                    close_requested,
+                    keep_window_alive,
+                    keys,
+                    navigate,
+                    apply_view,
+                )
+                    .chain(),
             );
     }
 }
 
 #[derive(Component)]
 pub struct OutputCamera;
+
+/// Set once the user asked to close the window or quit; the keep-alive must
+/// not fight that.
+#[derive(Resource, Default)]
+struct Quitting(bool);
+
+/// The close button means quit, exactly like `Esc`. Bevy's default handler
+/// despawns the window; without this the keep-alive would recreate it.
+fn close_requested(
+    mut requests: MessageReader<WindowCloseRequested>,
+    mut quitting: ResMut<Quitting>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if requests.read().next().is_some() && !quitting.0 {
+        info!("window close requested; quitting");
+        quitting.0 = true;
+        exit.write(AppExit::Success);
+    }
+}
 
 /// Orbit-camera state around the display quad.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
@@ -133,9 +160,10 @@ fn spawn_output(mut commands: Commands) {
 fn keep_window_alive(
     mut commands: Commands,
     windows: Query<Entity, With<Window>>,
+    quitting: Res<Quitting>,
     mut missing_for: Local<u32>,
 ) {
-    if windows.iter().next().is_some() {
+    if quitting.0 || windows.iter().next().is_some() {
         *missing_for = 0;
         return;
     }
@@ -228,9 +256,11 @@ fn keys(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<Entity, With<PrimaryWindow>>,
+    mut quitting: ResMut<Quitting>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
+        quitting.0 = true;
         exit.write(AppExit::Success);
     }
     if keys.just_pressed(KeyCode::KeyS)

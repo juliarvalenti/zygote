@@ -61,3 +61,21 @@ jobs:
         with:
           name: smoke-frames
           path: target/smoke/
+
+  smoke-macos:
+    name: render every project on Metal
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install imagemagick
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98"
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and capture one frame per project on the real GPU
+        run: scripts/smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-frames-macos
+          path: target/smoke/
