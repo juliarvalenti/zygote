@@ -18,7 +18,7 @@
 //! }
 //! ```
 //!
-//! Field types decide the parameter kind: `f32` → float, `bool` → bool,
+//! Field types decide the parameter kind: `f32` → float, `i32` → int, `bool` → bool,
 //! `String` → choice (needs `options`), `[f32; 4]` → color, `[f32; 2]` → vec2.
 //! Doc comments become the parameter's description. Ranges default to `0..1`.
 
@@ -30,6 +30,7 @@ use syn::{
 
 enum Kind {
     Float,
+    Int,
     Bool,
     Choice,
     Color,
@@ -229,6 +230,7 @@ fn parse_field(field: &syn::Field) -> syn::Result<Field> {
 fn kind_of(ty: &Type) -> syn::Result<Kind> {
     match ty {
         Type::Path(p) if p.path.is_ident("f32") => Ok(Kind::Float),
+        Type::Path(p) if p.path.is_ident("i32") => Ok(Kind::Int),
         Type::Path(p) if p.path.is_ident("bool") => Ok(Kind::Bool),
         Type::Path(p) if p.path.is_ident("String") => Ok(Kind::Choice),
         Type::Array(arr) => {
@@ -266,6 +268,8 @@ fn default_expr(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
     Ok(match (&field.kind, &field.default) {
         (Kind::Float, Some(d)) => quote!((#d) as f32),
         (Kind::Float, None) => quote!(0.0_f32),
+        (Kind::Int, Some(d)) => quote!((#d) as i32),
+        (Kind::Int, None) => quote!(0_i32),
         (Kind::Bool, Some(d)) => quote!(#d),
         (Kind::Bool, None) => quote!(false),
         (Kind::Choice, Some(d)) => quote!(::std::string::String::from(#d)),
@@ -323,6 +327,19 @@ fn spec_tokens(
         .unwrap_or(quote!(1.0_f32));
     Ok(match field.kind {
         Kind::Float => quote!(#core::ParamSpec::float(#name, #min, #max, #default, #doc)),
+        Kind::Int => {
+            let imin = field
+                .min
+                .clone()
+                .map(|e| quote!((#e) as i32))
+                .unwrap_or(quote!(0_i32));
+            let imax = field
+                .max
+                .clone()
+                .map(|e| quote!((#e) as i32))
+                .unwrap_or(quote!(100_i32));
+            quote!(#core::ParamSpec::int(#name, #imin, #imax, #default, #doc))
+        }
         Kind::Bool => quote!(#core::ParamSpec::bool(#name, #default, #doc)),
         Kind::Choice => {
             let options = &field.options;
@@ -341,6 +358,7 @@ fn from_value_tokens(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
     let name = &field.name;
     let accessor = match field.kind {
         Kind::Float => quote!(as_float()),
+        Kind::Int => quote!(as_int()),
         Kind::Bool => quote!(as_bool()),
         Kind::Choice => quote!(as_choice().map(::std::borrow::ToOwned::to_owned)),
         Kind::Color => quote!(as_color()),
@@ -359,6 +377,7 @@ fn to_value_tokens(field: &Field, core: &proc_macro2::TokenStream) -> proc_macro
     let name = &field.name;
     let value = match field.kind {
         Kind::Float => quote!(#core::ParamValue::Float(self.#ident)),
+        Kind::Int => quote!(#core::ParamValue::Int(self.#ident)),
         Kind::Bool => quote!(#core::ParamValue::Bool(self.#ident)),
         Kind::Choice => quote!(#core::ParamValue::Choice(self.#ident.clone())),
         Kind::Color => quote!(#core::ParamValue::Color(self.#ident)),

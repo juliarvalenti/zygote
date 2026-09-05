@@ -35,16 +35,34 @@ cargo run --release -p zygote-timeline    # the UI; connects to udp://127.0.0.1:
 cargo run --release -p zygote -- --showcase   # stock renderer, builtin nodes only
 ```
 
-The UI asks the renderer for its graph structure and parameter list, draws
-the graph, and builds one control per parameter: sliders for floats and
-vec2/color components, a switch for bools, a button row for choices. Press
-**Play** to loop the demo cues. Moving a control takes manual control of that
-parameter until released; manual always beats the cues. If the renderer is
-restarted the UI notices, re-describes, and re-pushes its state.
+The UI asks the renderer for its graph structure and parameter list, lists
+the nodes in a left rail (click one to filter), and builds one control per
+parameter: sliders for floats and ints, per-component sliders for vec2 and
+color, a switch for bools, a button row for choices.
+
+**Transport owns time.** While the UI is connected the renderer's clock
+follows the playhead: pause freezes the picture, stop returns to zero,
+scrubbing scrubs the animation. Feedback trails freeze too. Start the
+renderer with `--free-run` to keep it on the wall clock (installations with
+no UI attached free-run automatically).
+
+**Cues.** Stopped and parked on a cue, every control edits that cue
+directly; the mode chip says `editing cue N`. While playing (or after
+`Force live`), controls are live values layered over the cues until
+released. `⏎` adds a cue at the playhead that absorbs the current live
+values; `[` and `]` park on the previous/next cue. The lane under the chips
+shows how values travel between cues: a ramp interpolates, a flat line then a
+jump cuts. Double-click any parameter row to reset it to its default.
+
+**Keys** (handled at the window, no control can swallow them): `space`
+play/pause, `esc` stop, `home` to zero, `[` `]` cues, `⏎` add cue, `e`
+force live, `l` loop, `t` tile the output window next to the UI, `shift-t`
+pop it back out.
 
 Renderer options: `[graph.json] [--port N] [--size WxH] [--assets DIR]
-[--nodes DIR] [--showcase] [--capture out.png [--frames N] [--every K]]`
-(`--every` saves a numbered frame sequence). Keys: `S` screenshot, `Esc` quit.
+[--nodes DIR] [--showcase] [--free-run] [--capture out.png [--frames N]
+[--every K]]` (`--every` saves a numbered frame sequence). Renderer keys:
+`S` screenshot, `Esc` quit.
 
 ## What a node is
 
@@ -105,9 +123,10 @@ fn main() {
 }
 ```
 
-Parameter types: `float` (min..max), `bool`, `choice` (named options),
-`color` (`#rrggbb`), `vec2`. Floats, vec2 and colors interpolate between
-cues; bools and choices hold until the target cue's time. Generated WGSL
+Parameter types: `float` (min..max), `int` (min..max, stepped), `bool`,
+`choice` (named options), `color` (`#rrggbb`), `vec2`. Floats, vec2 and
+colors interpolate between cues, ints step through whole values, bools and
+choices hold until the target cue's time. Generated WGSL
 gives every node `params.<name>`, `<input>(uv)`, `has_<input>()`,
 `previous(uv)` for feedback nodes, and `frame.{time, dt, aspect, index}`.
 Param and input names must not collide with imported WGSL items; the header
@@ -157,7 +176,8 @@ Modulators: `time`, `lfo` (sine/triangle/saw/square), `audio_band {band}` and
 - **Protocol v2.** JSON per UDP datagram, version field in every renderer
   message: `hello`, `structure` (UI-facing graph summary), `describe`
   (typed parameter descriptors), `set_param(s)`, `clear_param`, `clear_all`,
-  `transport`, `ping`/`pong`.
+  `transport` (drives the renderer's clock), `arrange` (places the output
+  window), `ping`/`pong`.
 - **Projects** are workspace members depending on `zygote-render` by path.
   Version pinning and a project template are deferred until a project needs
   to stop moving with the engine.
@@ -184,3 +204,5 @@ xvfb-run -a -s "-screen 0 1280x720x24" env WGPU_BACKEND=vulkan \
 - Real audio analysis (modulator and hook exist).
 - Runtime graph editing from the UI; graphs are files the agent edits.
 - Compute passes and multi-pass nodes; the vocabulary grows when an effect needs them.
+- In-UI preview of the output (the output window tiles next to the UI instead).
+- Key learn for binding keys to cues and controls.

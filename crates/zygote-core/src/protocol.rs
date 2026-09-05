@@ -54,8 +54,12 @@ pub enum Message {
     ClearParam { path: ParamPath },
     /// UI → renderer: drop all overrides.
     ClearAll,
-    /// UI → renderer: informational transport state (for on-screen display / debugging).
+    /// UI → renderer: transport state. While a client keeps sending these the
+    /// renderer's clock follows `time` (pause freezes, scrubbing scrubs).
     Transport { time: f32, playing: bool },
+    /// UI → renderer: place the output window (logical pixels). `None` restores
+    /// the renderer's default size and position.
+    Arrange { bounds: Option<WindowBounds> },
     /// UI → renderer: liveness probe.
     Ping,
     /// Renderer → UI: reply to `Ping`.
@@ -118,6 +122,15 @@ impl Message {
             structure,
         }
     }
+}
+
+/// A window rectangle in logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WindowBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Non-blocking UDP receiver used by the renderer.

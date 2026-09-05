@@ -25,7 +25,9 @@ pub use node_def::{
     PREVIOUS_INPUT, UNIFORM_BYTES, UniformLayout, input_bindings, previous_bindings,
 };
 pub use params::{ParamDescriptor, ParamKind, ParamSpec, ParamType, ParamValue};
-pub use protocol::{DEFAULT_PORT, Message, PROTOCOL_VERSION, ParamReceiver, ParamSender};
+pub use protocol::{
+    DEFAULT_PORT, Message, PROTOCOL_VERSION, ParamReceiver, ParamSender, WindowBounds,
+};
 pub use resolve::{ResolvedParams, resolve_params};
 pub use timeline::{Cue, Timeline, Transition};
 

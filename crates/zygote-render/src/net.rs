@@ -1,6 +1,7 @@
 //! UDP parameter input (protocol v2).
 
 use bevy::prelude::*;
+use bevy::window::{PrimaryWindow, WindowPosition, WindowResolution};
 use zygote_core::{Message, PROTOCOL_VERSION, ParamPath, ParamReceiver, ParamValue};
 
 use crate::params::{ParamState, Transport};
@@ -37,6 +38,7 @@ pub fn poll(
     graph: Res<GraphRes>,
     library: Res<LibraryRes>,
     mut state: ResMut<ParamState>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     let Some(mut net) = net else { return };
     for (msg, from) in net.0.poll() {
@@ -71,7 +73,30 @@ pub fn poll(
             }
             Message::ClearAll => state.overrides.clear(),
             Message::Transport { time, playing } => {
-                state.transport = Some(Transport { time, playing });
+                state.transport = Some(Transport {
+                    time,
+                    playing,
+                    received: std::time::Instant::now(),
+                });
+            }
+            Message::Arrange { bounds } => {
+                for mut window in &mut windows {
+                    match bounds {
+                        Some(b) => {
+                            info!(
+                                "arranging output window at {},{} {}x{}",
+                                b.x, b.y, b.width, b.height
+                            );
+                            window.position = WindowPosition::At(IVec2::new(b.x, b.y));
+                            window.resolution = WindowResolution::new(b.width, b.height);
+                        }
+                        None => {
+                            info!("releasing output window to its default placement");
+                            window.position = WindowPosition::Automatic;
+                            window.resolution = WindowResolution::new(1280, 720);
+                        }
+                    }
+                }
             }
             Message::Ping => {
                 if let Err(e) = net.0.send_to(&Message::pong(), from) {

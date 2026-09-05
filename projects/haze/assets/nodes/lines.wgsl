@@ -1,10 +1,10 @@
 //! node: lines
 //! doc: Pulsing concentric polygonal rings and radial spokes from the centre
-//! param rings: float = 14 in 1..60 "Rings across the half-height"
-//! param sides: float = 6 in 3..12 "Polygon sides (12 is nearly a circle)"
+//! param rings: int = 14 in 1..60 "Rings across the half-height"
+//! param sides: int = 6 in 3..12 "Polygon sides (12 is nearly a circle)"
 //! param thickness: float = 0.06 in 0.005..0.5 "Line width relative to ring spacing"
-//! param accent_every: float = 4 in 0..12 "Every n-th ring is heavier (0 = none)"
-//! param spokes: float = 12 in 0..64 "Radial spokes"
+//! param accent_every: int = 4 in 0..12 "Every n-th ring is heavier (0 = none)"
+//! param spokes: int = 12 in 0..64 "Radial spokes"
 //! param spoke_width: float = 0.03 in 0.002..0.3 "Spoke width relative to spoke spacing"
 //! param pulse_rate: float = 0.5 in 0..4 "Pulses per second"
 //! param pulse_depth: float = 0.6 in 0..1 "How much a pulse brightens the rings it passes"
@@ -27,17 +27,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var p = (in.uv - 0.5) * vec2<f32>(frame.aspect, 1.0) * 2.0;
     p = rotate2(p, params.rotate * TAU * t);
 
-    let r = polygon_radius(p, params.sides);
-    let ring_coord = r * params.rings - params.expand * t;
+    let r = polygon_radius(p, f32(params.sides));
+    let ring_coord = r * f32(params.rings) - params.expand * t;
     let ring_index = floor(ring_coord);
     let ring_frac = abs(fract(ring_coord) - 0.5);
 
     // Base rings, with every n-th heavier.
     var width = params.thickness;
-    if params.accent_every >= 1.0 {
+    if params.accent_every >= 1 {
         let idx = i32(round(ring_index));
-        let n = i32(round(params.accent_every));
-        if idx % n == 0 { width *= 2.2; }
+        if idx % params.accent_every == 0 { width *= 2.2; }
     }
     // A pulse travelling outward brightens the rings it crosses.
     let phase = fract(params.pulse_rate * t) * 1.4;
@@ -49,9 +48,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Spokes, thinned towards the centre so they do not clump.
     var spoke = 0.0;
-    if params.spokes >= 1.0 {
+    if params.spokes >= 1 {
         let a = atan2(p.y, p.x) / TAU;
-        let s = abs(fract(a * params.spokes) - 0.5);
+        let s = abs(fract(a * f32(params.spokes)) - 0.5);
         let sw = params.spoke_width * max(length(p), 0.05);
         spoke = (1.0 - smoothstep(sw * 0.5, sw, s * max(length(p), 0.05))) * smoothstep(0.02, 0.25, length(p));
     }

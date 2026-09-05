@@ -13,6 +13,7 @@ use gpui_kit::*;
 use zygote_core::{
     DEFAULT_PORT, Graph, GraphStructure, Message, NodeId, NodeLibrary, PROTOCOL_VERSION,
     ParamDescriptor, ParamPath, ParamSender, ParamType, ParamValue, Timeline, Transition,
+    WindowBounds as OutputBounds,
 };
 
 /// UI refresh / send rate.
@@ -20,17 +21,26 @@ const TICK: Duration = Duration::from_millis(33);
 /// How long to wait for the renderer's `Describe` before falling back to the
 /// built-in first-pass graph for the parameter list.
 const DESCRIBE_TIMEOUT: Duration = Duration::from_millis(1500);
-/// Re-send `Hello` this often while the renderer is silent, so a restarted
-/// renderer is picked up (and re-fed the current values) automatically.
+/// Re-send `Hello`/`Ping` this often.
 const HELLO_INTERVAL: Duration = Duration::from_secs(2);
-const TIMELINE_HEIGHT: f32 = 110.0;
+const AXIS_HEIGHT: f32 = 104.0;
+const RAIL_WIDTH: f32 = 200.0;
 const NODE_W: f32 = 168.0;
 const NODE_H: f32 = 46.0;
 const COL_GAP: f32 = 48.0;
 const ROW_GAP: f32 = 14.0;
 const GRAPH_PAD: f32 = 16.0;
-/// Height of the pannable graph viewport.
 const GRAPH_VIEW_H: f32 = 150.0;
+
+// Transport keys. Handled in the capture phase at the window root so no
+// focused control can swallow them.
+actions!(
+    zygote_timeline,
+    [
+        TogglePlay, Stop, GoToStart, PrevCue, NextCue, AddCue, ToggleLoop, ToggleLive, TileOutput,
+        PopOut
+    ]
+);
 
 struct Options {
     file: PathBuf,
@@ -70,7 +80,31 @@ pub fn run() {
     let options = parse_args();
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
-        let bounds = Bounds::centered(None, size(px(1040.), px(720.)), cx);
+        cx.bind_keys([
+            KeyBinding::new("space", TogglePlay, None),
+            KeyBinding::new("escape", Stop, None),
+            KeyBinding::new("home", GoToStart, None),
+            KeyBinding::new("[", PrevCue, None),
+            KeyBinding::new("]", NextCue, None),
+            KeyBinding::new("enter", AddCue, None),
+            KeyBinding::new("l", ToggleLoop, None),
+            KeyBinding::new("e", ToggleLive, None),
+            KeyBinding::new("t", TileOutput, None),
+            KeyBinding::new("shift-t", PopOut, None),
+        ]);
+
+        // Take the left part of the primary display so the output window can
+        // be tiled to the right of us.
+        let bounds = match cx.primary_display().map(|d| d.bounds()) {
+            Some(display) => {
+                let width = (display.size.width * 0.46).max(px(900.));
+                Bounds {
+                    origin: display.origin + point(px(12.), px(40.)),
+                    size: size(width, display.size.height - px(80.)),
+                }
+            }
+            None => Bounds::centered(None, size(px(1040.), px(760.)), cx),
+        };
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -92,11 +126,10 @@ pub fn run() {
     });
 }
 
-/// One control bound to a parameter. Floats get a slider, vec2/color get one
-/// slider per component, bools a switch, choices a button row.
+/// One control bound to a parameter. Floats and ints get a slider, vec2 and
+/// color get one slider per component, bools a switch, choices a button row.
 struct ParamControl {
     desc: ParamDescriptor,
-    /// Slider per numeric component (1 for float, 2 for vec2, 3 for color rgb).
     sliders: Vec<Entity<SliderState>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -108,25 +141,34 @@ enum Drag {
     Cue(u32),
 }
 
+/// What moving a control means right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    /// Stopped and parked on a cue: controls write into that cue.
+    Edit(u32),
+    /// Playing, or not on a cue: controls are live overrides on top of the cues.
+    Live,
+}
+
 pub struct TimelineApp {
     file: PathBuf,
-    /// Structure of the renderer's graph, drawn read-only above the axis.
+    focus_handle: FocusHandle,
     graph: Option<GraphStructure>,
-    /// Pan offset of the graph surface inside its viewport, in pixels.
+    show_graph: bool,
     graph_pan: Point<f32>,
-    /// Mouse position and pan at the start of a graph drag.
     graph_drag: Option<(Point<Pixels>, Point<f32>)>,
     graph_viewport: Rc<Cell<Bounds<Pixels>>>,
-    /// Set when a new graph arrives so the next render centres it.
     graph_fit_pending: bool,
+    /// Rail selection: show only this node's parameters.
+    selected_node: Option<NodeId>,
     timeline: Timeline,
     playhead: f32,
     playing: bool,
+    /// Force live mode even when parked on a cue.
+    force_live: bool,
     selected: Option<u32>,
     params: Vec<ParamControl>,
-    /// Manual values that beat the programmed cues until released.
     overrides: BTreeMap<ParamPath, ParamValue>,
-    /// Last values pushed to the renderer, for diffing.
     sent: BTreeMap<ParamPath, ParamValue>,
     sender: Option<ParamSender>,
     described: bool,
@@ -134,29 +176,30 @@ pub struct TimelineApp {
     started: Instant,
     last_hello: Instant,
     last_heard: Option<Instant>,
-    /// Set once the renderer stops answering; cleared (with a re-describe) when it returns.
     quiet: bool,
     protocol_mismatch: Option<u32>,
     last_tick: Instant,
     drag: Drag,
     axis_bounds: Rc<Cell<Bounds<Pixels>>>,
+    tiled: bool,
+    /// The timeline is the built-in demo, not a file; it may be replaced by a
+    /// fresh one once the renderer describes a graph it does not fit.
+    timeline_is_default: bool,
     status: String,
 }
 
 impl TimelineApp {
     fn new(options: Options, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (timeline, status) = match std::fs::read_to_string(&options.file) {
+        let (timeline, status, timeline_is_default) = match std::fs::read_to_string(&options.file) {
             Ok(json) => match Timeline::from_json(&json) {
-                Ok(t) => (t, format!("loaded {}", options.file.display())),
+                Ok(t) => (t, format!("loaded {}", options.file.display()), false),
                 Err(e) => (
                     default_timeline(),
                     format!("could not parse {}: {e}", options.file.display()),
+                    true,
                 ),
             },
-            Err(_) => (
-                default_timeline(),
-                "new timeline (two demo cues)".to_owned(),
-            ),
+            Err(_) => (default_timeline(), "new timeline".to_owned(), true),
         };
 
         let sender = match ParamSender::connect(options.target.as_str()) {
@@ -170,16 +213,23 @@ impl TimelineApp {
             }
         };
 
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle, cx);
+
         let mut this = Self {
             file: options.file,
+            focus_handle,
             graph: None,
+            show_graph: false,
             graph_pan: Point::default(),
             graph_drag: None,
             graph_viewport: Rc::new(Cell::new(Bounds::default())),
             graph_fit_pending: true,
+            selected_node: None,
             timeline,
             playhead: 0.0,
             playing: false,
+            force_live: false,
             selected: None,
             params: Vec::new(),
             overrides: BTreeMap::new(),
@@ -195,11 +245,15 @@ impl TimelineApp {
             last_tick: Instant::now(),
             drag: Drag::None,
             axis_bounds: Rc::new(Cell::new(Bounds::default())),
+            tiled: false,
+            timeline_is_default,
             status,
         };
         this.selected = this.timeline.cues.first().map(|c| c.id);
+        if let Some(cue) = this.selected.and_then(|id| this.timeline.cue(id)) {
+            this.playhead = cue.time;
+        }
 
-        // Drive the transport, network and slider positions at a fixed rate.
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(TICK).await;
@@ -214,6 +268,16 @@ impl TimelineApp {
         .detach();
 
         this
+    }
+
+    fn mode(&self) -> Mode {
+        if self.playing || self.force_live {
+            return Mode::Live;
+        }
+        match self.selected.and_then(|id| self.timeline.cue(id)) {
+            Some(cue) if (cue.time - self.playhead).abs() < 1e-3 => Mode::Edit(cue.id),
+            _ => Mode::Live,
+        }
     }
 
     // ---- parameters -------------------------------------------------------
@@ -231,24 +295,42 @@ impl TimelineApp {
                 .get(&desc.path)
                 .cloned()
                 .unwrap_or_else(|| desc.value.clone());
-            let ranges: Vec<(f32, f32, f32)> = match (&desc.ty, &current) {
+            // (min, max, step, value) per slider component.
+            let ranges: Vec<(f32, f32, f32, f32)> = match (&desc.ty, &current) {
                 (ParamType::Float { min, max }, v) => {
-                    vec![(*min, *max, v.as_float().unwrap_or(*min))]
+                    vec![(
+                        *min,
+                        *max,
+                        (max - min).abs().max(1e-6) / 1000.0,
+                        v.as_float().unwrap_or(*min),
+                    )]
+                }
+                (ParamType::Int { min, max }, v) => {
+                    vec![(
+                        *min as f32,
+                        *max as f32,
+                        1.0,
+                        v.as_int().unwrap_or(*min) as f32,
+                    )]
                 }
                 (ParamType::Vec2 { min, max }, v) => {
                     let xy = v.as_vec2().unwrap_or([0.0; 2]);
-                    vec![(*min, *max, xy[0]), (*min, *max, xy[1])]
+                    let step = (max - min).abs().max(1e-6) / 1000.0;
+                    vec![(*min, *max, step, xy[0]), (*min, *max, step, xy[1])]
                 }
                 (ParamType::Color, v) => {
                     let c = v.as_color().unwrap_or([1.0; 4]);
-                    vec![(0.0, 1.0, c[0]), (0.0, 1.0, c[1]), (0.0, 1.0, c[2])]
+                    vec![
+                        (0.0, 1.0, 0.001, c[0]),
+                        (0.0, 1.0, 0.001, c[1]),
+                        (0.0, 1.0, 0.001, c[2]),
+                    ]
                 }
                 _ => Vec::new(),
             };
             let mut sliders = Vec::new();
             let mut subscriptions = Vec::new();
-            for (component, (min, max, value)) in ranges.into_iter().enumerate() {
-                let step = step_for(&desc, max - min);
+            for (component, (min, max, step, value)) in ranges.into_iter().enumerate() {
                 let slider = cx.new(|_| {
                     SliderState::new()
                         .min(min)
@@ -277,7 +359,7 @@ impl TimelineApp {
         cx.notify();
     }
 
-    /// A slider moved: manual control of one component of a parameter.
+    /// A slider moved: one component of a parameter changed.
     fn on_component(
         &mut self,
         path: &ParamPath,
@@ -285,37 +367,64 @@ impl TimelineApp {
         value: f32,
         cx: &mut Context<Self>,
     ) {
-        let current = self.effective_values().get(path).cloned().or_else(|| {
-            self.params
-                .iter()
-                .find(|c| &c.desc.path == path)
-                .map(|c| c.desc.value.clone())
-        });
+        let control = self.params.iter().find(|c| &c.desc.path == path);
+        let current = self
+            .effective_values()
+            .get(path)
+            .cloned()
+            .or_else(|| control.map(|c| c.desc.value.clone()));
         let Some(current) = current else { return };
-        let next = match current {
-            ParamValue::Float(_) => ParamValue::Float(value),
-            ParamValue::Vec2(mut v) => {
+        let next = match (control.map(|c| &c.desc.ty), current) {
+            (Some(ParamType::Int { .. }), _) => ParamValue::Int(value.round() as i32),
+            (_, ParamValue::Float(_)) => ParamValue::Float(value),
+            (_, ParamValue::Int(_)) => ParamValue::Int(value.round() as i32),
+            (_, ParamValue::Vec2(mut v)) => {
                 if let Some(slot) = v.get_mut(component) {
                     *slot = value;
                 }
                 ParamValue::Vec2(v)
             }
-            ParamValue::Color(mut c) => {
+            (_, ParamValue::Color(mut c)) => {
                 if let Some(slot) = c.get_mut(component) {
                     *slot = value;
                 }
                 ParamValue::Color(c)
             }
-            other => other,
+            (_, other) => other,
         };
-        self.set_manual(path, next, cx);
+        self.set_value(path, next, cx);
     }
 
-    /// Manual control: this value wins over the cues until released.
-    fn set_manual(&mut self, path: &ParamPath, value: ParamValue, cx: &mut Context<Self>) {
-        self.overrides.insert(path.clone(), value);
+    /// Apply a control change according to the current mode.
+    fn set_value(&mut self, path: &ParamPath, value: ParamValue, cx: &mut Context<Self>) {
+        match self.mode() {
+            Mode::Edit(id) => {
+                if let Some(cue) = self.timeline.cue_mut(id) {
+                    cue.values.insert(path.clone(), value);
+                }
+                // The cue now carries the value; a stale override would hide it.
+                self.overrides.remove(path);
+            }
+            Mode::Live => {
+                self.overrides.insert(path.clone(), value);
+            }
+        }
         self.push_values();
         cx.notify();
+    }
+
+    /// Double-click: back to the declared default (into the cue when editing).
+    fn reset_to_default(&mut self, path: &ParamPath, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(default) = self
+            .params
+            .iter()
+            .find(|c| &c.desc.path == path)
+            .map(|c| c.desc.default.clone())
+        else {
+            return;
+        };
+        self.set_value(path, default, cx);
+        self.sync_sliders(window, cx);
     }
 
     fn release_override(&mut self, path: &ParamPath, window: &mut Window, cx: &mut Context<Self>) {
@@ -323,7 +432,6 @@ impl TimelineApp {
         if !self.timeline.evaluate(self.playhead).contains_key(path)
             && let Some(sender) = &self.sender
         {
-            // Nothing programmed for this parameter: hand it back to the graph's base value.
             let _ = sender.send(&Message::ClearParam { path: path.clone() });
             self.sent.remove(path);
         }
@@ -360,7 +468,6 @@ impl TimelineApp {
         if changed.is_empty() {
             return;
         }
-        // Keep datagrams small.
         for chunk in changed.chunks(32) {
             let _ = sender.send(&Message::SetParams {
                 values: chunk.to_vec(),
@@ -379,6 +486,7 @@ impl TimelineApp {
             };
             let components: Vec<f32> = match value {
                 ParamValue::Float(v) => vec![*v],
+                ParamValue::Int(v) => vec![*v as f32],
                 ParamValue::Vec2(v) => v.to_vec(),
                 ParamValue::Color(c) => c[..3].to_vec(),
                 _ => Vec::new(),
@@ -416,12 +524,11 @@ impl TimelineApp {
             self.sync_sliders(window, cx);
         }
         self.push_values();
-        if let Some(sender) = &self.sender
-            && self.playing
-        {
+        // The renderer's clock follows this. Paused → frozen picture.
+        if let Some(sender) = &self.sender {
             let _ = sender.send(&Message::Transport {
                 time: self.playhead,
-                playing: true,
+                playing: self.playing,
             });
         }
         cx.notify();
@@ -433,75 +540,93 @@ impl TimelineApp {
             Some(sender) => sender.poll(),
             None => Vec::new(),
         };
-        {
-            for msg in messages {
-                self.last_heard = Some(Instant::now());
-                if self.quiet {
-                    // Back from the dead: ask for a fresh description so the
-                    // controls match whatever graph it now runs, and re-push state.
-                    self.quiet = false;
-                    if let Some(sender) = &self.sender {
-                        let _ = sender.send(&Message::hello("zygote-timeline"));
-                    }
-                    self.last_hello = Instant::now();
+        for msg in messages {
+            self.last_heard = Some(Instant::now());
+            if self.quiet {
+                self.quiet = false;
+                if let Some(sender) = &self.sender {
+                    let _ = sender.send(&Message::hello("zygote-timeline"));
                 }
-                match msg {
-                    Message::Structure {
-                        protocol,
-                        structure,
-                    } => {
-                        self.note_protocol(protocol);
-                        self.graph = Some(structure);
-                        self.graph_fit_pending = true;
-                    }
-                    Message::Pong { protocol } => self.note_protocol(protocol),
-                    Message::Describe {
-                        protocol,
-                        graph,
-                        chunk,
-                        chunks,
-                        params,
-                    } => {
-                        self.note_protocol(protocol);
-                        if chunk == 0 {
-                            self.describe_buffer.clear();
-                        }
-                        self.describe_buffer.extend(params);
-                        if chunk + 1 == chunks {
-                            let was_described = self.described;
-                            self.described = true;
-                            self.status = format!(
-                                "connected to renderer · graph `{graph}` · {} parameters{}",
-                                self.describe_buffer.len(),
-                                match self.protocol_mismatch {
-                                    Some(p) => format!(
-                                        " · protocol mismatch (renderer {p}, ui {PROTOCOL_VERSION})"
-                                    ),
-                                    None => String::new(),
-                                }
-                            );
-                            let fresh = std::mem::take(&mut self.describe_buffer);
-                            // Only rebuild controls when the parameter set actually changed
-                            // (a renderer restart re-describes the same graph).
-                            let same = was_described
-                                && self.params.len() == fresh.len()
-                                && self
-                                    .params
-                                    .iter()
-                                    .zip(&fresh)
-                                    .all(|(c, d)| c.desc.path == d.path && c.desc.ty == d.ty);
-                            installed = Some((fresh, same));
-                        }
-                    }
-                    _ => {}
+                self.last_hello = Instant::now();
+            }
+            match msg {
+                Message::Structure {
+                    protocol,
+                    structure,
+                } => {
+                    self.note_protocol(protocol);
+                    self.graph = Some(structure);
+                    self.graph_fit_pending = true;
                 }
+                Message::Pong { protocol } => self.note_protocol(protocol),
+                Message::Describe {
+                    protocol,
+                    graph,
+                    chunk,
+                    chunks,
+                    params,
+                } => {
+                    self.note_protocol(protocol);
+                    if chunk == 0 {
+                        self.describe_buffer.clear();
+                    }
+                    self.describe_buffer.extend(params);
+                    if chunk + 1 == chunks {
+                        let was_described = self.described;
+                        self.described = true;
+                        self.status = format!(
+                            "connected · graph `{graph}` · {} parameters{}",
+                            self.describe_buffer.len(),
+                            match self.protocol_mismatch {
+                                Some(p) => format!(
+                                    " · protocol mismatch (renderer {p}, ui {PROTOCOL_VERSION})"
+                                ),
+                                None => String::new(),
+                            }
+                        );
+                        let fresh = std::mem::take(&mut self.describe_buffer);
+                        let same = was_described
+                            && self.params.len() == fresh.len()
+                            && self
+                                .params
+                                .iter()
+                                .zip(&fresh)
+                                .all(|(c, d)| c.desc.path == d.path && c.desc.ty == d.ty);
+                        installed = Some((fresh, same));
+                    }
+                }
+                _ => {}
             }
         }
         if let Some((descriptors, same)) = installed {
+            if self.timeline_is_default {
+                let fits = self
+                    .timeline
+                    .cues
+                    .iter()
+                    .flat_map(|c| c.values.keys())
+                    .any(|path| descriptors.iter().any(|d| &d.path == path));
+                if !fits {
+                    // Start from one cue holding the graph's defaults, parked on it.
+                    let mut timeline = Timeline::new(8.0);
+                    let values = descriptors
+                        .iter()
+                        .map(|d| (d.path.clone(), d.value.clone()))
+                        .collect();
+                    let id = timeline.add_cue(0.0, Transition::Cut, values);
+                    self.timeline = timeline;
+                    self.selected = Some(id);
+                    self.playhead = 0.0;
+                    self.overrides.clear();
+                    self.status =
+                        "new timeline: cue 1 holds the graph defaults; move sliders to edit it"
+                            .to_owned();
+                }
+                self.timeline_is_default = false;
+            }
             if !same {
                 self.install_params(descriptors, window, cx);
             }
-            // Re-send everything so a freshly (re)started renderer picks up the state.
             self.sent.clear();
             self.push_values();
         } else if !self.described
@@ -520,8 +645,6 @@ impl TimelineApp {
             self.described = true;
         }
 
-        // Heartbeat. A described renderer is pinged; an undescribed or quiet
-        // one is re-greeted so a restart is picked up without user action.
         if self.last_hello.elapsed() >= HELLO_INTERVAL
             && let Some(sender) = &self.sender
         {
@@ -556,6 +679,10 @@ impl TimelineApp {
     fn stop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.playing = false;
         self.seek(0.0, window, cx);
+        // Park on the cue at 0 if there is one, so edits go into it.
+        if let Some(cue) = self.timeline.cues.iter().find(|c| c.time.abs() < 1e-3) {
+            self.selected = Some(cue.id);
+        }
     }
 
     fn seek(&mut self, time: f32, window: &mut Window, cx: &mut Context<Self>) {
@@ -565,25 +692,65 @@ impl TimelineApp {
         cx.notify();
     }
 
+    /// Select a cue and park the playhead on it (edit mode when stopped).
+    fn go_to_cue(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(time) = self.timeline.cue(id).map(|c| c.time) else {
+            return;
+        };
+        self.selected = Some(id);
+        self.seek(time, window, cx);
+    }
+
+    fn step_cue(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let t = self.playhead;
+        let target = if forward {
+            self.timeline.cues.iter().find(|c| c.time > t + 1e-3)
+        } else {
+            self.timeline.cues.iter().rev().find(|c| c.time < t - 1e-3)
+        };
+        if let Some(cue) = target.map(|c| c.id) {
+            self.go_to_cue(cue, window, cx);
+        }
+    }
+
     // ---- cues -------------------------------------------------------------
 
+    /// Snapshot everything (cues + live overrides) into a new cue at the
+    /// playhead; the overrides are absorbed by it.
     fn add_cue(&mut self, cx: &mut Context<Self>) {
+        if let Some(existing) = self
+            .timeline
+            .cues
+            .iter()
+            .find(|c| (c.time - self.playhead).abs() < 1e-3)
+        {
+            let id = existing.id;
+            self.selected = Some(id);
+            self.status = format!("already on cue {id}; slider changes edit it");
+            cx.notify();
+            return;
+        }
         let values = self.effective_values();
         let id = self
             .timeline
             .add_cue(self.playhead, Transition::Interpolate, values);
+        self.overrides.clear();
         self.selected = Some(id);
         self.status = format!("added cue {id} at {:.2}s", self.playhead);
+        self.push_values();
         cx.notify();
     }
 
-    fn update_selected(&mut self, cx: &mut Context<Self>) {
+    /// Bake current live values into the selected cue.
+    fn bake_into_selected(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected else { return };
         let values = self.effective_values();
         if let Some(cue) = self.timeline.cue_mut(id) {
             cue.values = values;
-            self.status = format!("updated cue {id}");
+            self.overrides.clear();
+            self.status = format!("baked live values into cue {id}");
         }
+        self.push_values();
         cx.notify();
     }
 
@@ -641,6 +808,52 @@ impl TimelineApp {
         cx.notify();
     }
 
+    // ---- window arrangement ------------------------------------------------
+
+    /// Put the output window to the right of this one, 16:9, on the same display.
+    fn tile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sender) = &self.sender else { return };
+        let ui = window.bounds();
+        let display = window.display(cx).map(|d| d.bounds()).unwrap_or(ui);
+        let scale = window.scale_factor();
+        let gap = px(12.);
+        let x = ui.origin.x + ui.size.width + gap;
+        let available_w = (display.origin.x + display.size.width - x - gap).max(px(320.));
+        let available_h = (display.size.height - px(80.)).max(px(180.));
+        let mut w = available_w;
+        let mut h = w * 9.0 / 16.0;
+        if h > available_h {
+            h = available_h;
+            w = h * 16.0 / 9.0;
+        }
+        let f = |v: Pixels| -> f32 { v.into() };
+        // Bevy positions windows in physical pixels and sizes them in logical pixels.
+        let bounds = OutputBounds {
+            x: (f(x) * scale) as i32,
+            y: (f(ui.origin.y) * scale) as i32,
+            width: f(w) as u32,
+            height: f(h) as u32,
+        };
+        let _ = sender.send(&Message::Arrange {
+            bounds: Some(bounds),
+        });
+        self.tiled = true;
+        self.status = format!(
+            "output tiled at {}x{} next to this window",
+            bounds.width, bounds.height
+        );
+        cx.notify();
+    }
+
+    fn release_output(&mut self, cx: &mut Context<Self>) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(&Message::Arrange { bounds: None });
+        }
+        self.tiled = false;
+        self.status = "output window released".to_owned();
+        cx.notify();
+    }
+
     // ---- timeline axis -----------------------------------------------------
 
     fn time_at(&self, x: Pixels) -> f32 {
@@ -659,31 +872,15 @@ impl TimelineApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.drag = Drag::Playhead;
         let t = self.time_at(ev.position.x);
-        // Grab a cue if the click lands on its marker, otherwise scrub.
-        let width: f32 = self.axis_bounds.get().size.width.into();
-        let tolerance = 6.0 / width.max(1.0) * self.timeline.duration;
-        let hit = self
-            .timeline
-            .cues
-            .iter()
-            .filter(|c| (c.time - t).abs() <= tolerance)
-            .min_by(|a, b| (a.time - t).abs().total_cmp(&(b.time - t).abs()))
-            .map(|c| c.id);
-        match hit {
-            Some(id) => {
-                self.selected = Some(id);
-                self.drag = Drag::Cue(id);
-                if let Some(cue) = self.timeline.cue(id) {
-                    let time = cue.time;
-                    self.seek(time, window, cx);
-                }
-            }
-            None => {
-                self.drag = Drag::Playhead;
-                self.seek(t, window, cx);
-            }
-        }
+        self.seek(t, window, cx);
+    }
+
+    fn cue_mouse_down(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
+        self.drag = Drag::Cue(id);
+        self.go_to_cue(id, window, cx);
+        cx.stop_propagation();
     }
 
     fn axis_mouse_move(
@@ -708,25 +905,214 @@ impl TimelineApp {
         cx.notify();
     }
 
+    // ---- graph viewport ------------------------------------------------------
+
+    fn graph_mouse_down(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.graph_drag = Some((ev.position, self.graph_pan));
+        cx.notify();
+    }
+
+    fn graph_mouse_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if let Some((start, pan)) = self.graph_drag {
+            let dx: f32 = (ev.position.x - start.x).into();
+            let dy: f32 = (ev.position.y - start.y).into();
+            self.graph_pan = point(pan.x + dx, pan.y + dy);
+            cx.notify();
+        }
+    }
+
+    fn graph_mouse_up(&mut self, cx: &mut Context<Self>) {
+        self.graph_drag = None;
+        cx.notify();
+    }
+
+    fn graph_scroll(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        let delta = ev.delta.pixel_delta(px(24.));
+        let dx: f32 = delta.x.into();
+        let dy: f32 = delta.y.into();
+        if ev.modifiers.shift {
+            self.graph_pan = point(self.graph_pan.x + dy, self.graph_pan.y + dx);
+        } else {
+            self.graph_pan = point(self.graph_pan.x + dx + dy, self.graph_pan.y);
+        }
+        cx.notify();
+    }
+
+    fn graph_fit(&mut self, content: (f32, f32), cx: &mut Context<Self>) {
+        let viewport = self.graph_viewport.get();
+        let vw: f32 = viewport.size.width.into();
+        let vh: f32 = viewport.size.height.into();
+        if vw <= 0.0 {
+            return;
+        }
+        let x = if content.0 <= vw {
+            (vw - content.0) / 2.0
+        } else {
+            0.0
+        };
+        let y = ((vh - content.1) / 2.0).max(0.0);
+        self.graph_pan = point(x, y);
+        self.graph_fit_pending = false;
+        cx.notify();
+    }
+
     // ---- rendering ---------------------------------------------------------
+
+    fn render_rail(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let mut rail = v_flex()
+            .w(px(RAIL_WIDTH))
+            .flex_shrink_0()
+            .h_full()
+            .gap_1()
+            .pr_3()
+            .border_r_1()
+            .border_color(theme.border);
+        rail = rail.child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .pb_1()
+                .child("NODES"),
+        );
+        let all_selected = self.selected_node.is_none();
+        rail = rail.child(
+            div()
+                .id("node-all")
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .text_sm()
+                .cursor_pointer()
+                .when(all_selected, |d| d.bg(theme.primary.opacity(0.12)))
+                .text_color(if all_selected {
+                    theme.primary
+                } else {
+                    theme.foreground
+                })
+                .child("All parameters")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.selected_node = None;
+                    cx.notify();
+                })),
+        );
+        if let Some(graph) = &self.graph {
+            let depths = structure_depths(graph);
+            for (i, node) in graph.nodes.iter().enumerate() {
+                let selected = self.selected_node.as_ref() == Some(&node.id);
+                let is_output = node.id == graph.output;
+                let depth = depths.get(&node.id).copied().unwrap_or(0);
+                let id = node.id.clone();
+                rail = rail.child(
+                    v_flex()
+                        .id(("node", i))
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .when(selected, |d| d.bg(theme.primary.opacity(0.12)))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .items_center()
+                                .child(div().w(px(depth as f32 * 8.0)))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .truncate()
+                                        .text_color(if selected {
+                                            theme.primary
+                                        } else {
+                                            theme.foreground
+                                        })
+                                        .child(node.id.to_string()),
+                                )
+                                .when(is_output, |d| {
+                                    d.child(
+                                        div().text_xs().text_color(theme.primary).child("→ out"),
+                                    )
+                                }),
+                        )
+                        .child(
+                            div()
+                                .pl(px(depth as f32 * 8.0))
+                                .text_xs()
+                                .truncate()
+                                .text_color(theme.muted_foreground)
+                                .child(node.kind.clone()),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.selected_node = Some(id.clone());
+                            cx.notify();
+                        })),
+                );
+            }
+        }
+        rail = rail.child(div().flex_1());
+        rail = rail.child(
+            Button::new("toggle-graph")
+                .small()
+                .label(if self.show_graph {
+                    "Hide graph"
+                } else {
+                    "Show graph"
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_graph = !this.show_graph;
+                    this.graph_fit_pending = true;
+                    cx.notify();
+                })),
+        );
+        rail.into_any_element()
+    }
 
     fn render_transport(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
+        let mode = self.mode();
+        let (mode_label, mode_color) = match mode {
+            Mode::Edit(id) => (format!("editing cue {id}"), theme.primary),
+            Mode::Live => (
+                if self.playing {
+                    "live"
+                } else {
+                    "live · not on a cue"
+                }
+                .to_owned(),
+                theme.warning,
+            ),
+        };
         h_flex()
             .gap_2()
             .items_center()
+            .flex_wrap()
             .child(
                 Button::new("play")
                     .small()
                     .primary()
-                    .label(if self.playing { "Pause" } else { "Play" })
+                    .label(if self.playing {
+                        "Pause  ␣"
+                    } else {
+                        "Play  ␣"
+                    })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_play(cx))),
             )
             .child(
                 Button::new("stop")
                     .small()
-                    .label("Stop")
+                    .label("Stop  esc")
                     .on_click(cx.listener(|this, _, window, cx| this.stop(window, cx))),
+            )
+            .child(
+                Button::new("prev-cue")
+                    .small()
+                    .label("[ prev")
+                    .on_click(cx.listener(|this, _, window, cx| this.step_cue(false, window, cx))),
+            )
+            .child(
+                Button::new("next-cue")
+                    .small()
+                    .label("next ]")
+                    .on_click(cx.listener(|this, _, window, cx| this.step_cue(true, window, cx))),
             )
             .child(
                 Button::new("loop")
@@ -765,16 +1151,27 @@ impl TimelineApp {
             )
             .child(div().flex_1())
             .child(
-                Button::new("save")
-                    .small()
-                    .label("Save")
-                    .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .text_xs()
+                    .bg(mode_color.opacity(0.12))
+                    .text_color(mode_color)
+                    .child(mode_label),
             )
             .child(
-                Button::new("load")
+                Button::new("mode")
                     .small()
-                    .label("Load")
-                    .on_click(cx.listener(|this, _, window, cx| this.load(window, cx))),
+                    .label(if self.force_live {
+                        "Edit cues  e"
+                    } else {
+                        "Force live  e"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.force_live = !this.force_live;
+                        cx.notify();
+                    })),
             )
             .into_any_element()
     }
@@ -785,26 +1182,27 @@ impl TimelineApp {
         h_flex()
             .gap_2()
             .items_center()
+            .flex_wrap()
             .child(
                 Button::new("add-cue")
                     .small()
                     .primary()
-                    .label("Add cue at playhead")
+                    .label("Add cue here  ⏎")
                     .on_click(cx.listener(|this, _, _, cx| this.add_cue(cx))),
             )
             .child(
-                Button::new("update-cue")
+                Button::new("bake-cue")
                     .small()
-                    .label("Update cue")
-                    .disabled(selected.is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.update_selected(cx))),
+                    .label("Bake live values into cue")
+                    .disabled(selected.is_none() || self.overrides.is_empty())
+                    .on_click(cx.listener(|this, _, _, cx| this.bake_into_selected(cx))),
             )
             .child(
                 Button::new("toggle-transition")
                     .small()
                     .label(match selected.map(|c| c.transition) {
-                        Some(Transition::Cut) => "Into cue: cut",
-                        Some(Transition::Interpolate) => "Into cue: interpolate",
+                        Some(Transition::Cut) => "Into cue: step",
+                        Some(Transition::Interpolate) => "Into cue: ramp",
                         None => "Into cue: —",
                     })
                     .disabled(selected.is_none())
@@ -821,7 +1219,7 @@ impl TimelineApp {
             .child(div().flex_1())
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(match selected {
                         Some(cue) => format!(
@@ -833,34 +1231,125 @@ impl TimelineApp {
                         None => "no cue selected".to_owned(),
                     }),
             )
+            .child(
+                Button::new("save")
+                    .small()
+                    .label("Save")
+                    .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+            )
+            .child(
+                Button::new("load")
+                    .small()
+                    .label("Load")
+                    .on_click(cx.listener(|this, _, window, cx| this.load(window, cx))),
+            )
             .into_any_element()
     }
 
+    /// Time axis: tick row, cue chips on a lane, segment lane showing ramps
+    /// and steps between cues, and the playhead across everything.
     fn render_axis(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let duration = self.timeline.duration.max(1e-3);
         let bounds_cell = self.axis_bounds.clone();
-        let accent = theme.primary;
+        let primary = theme.primary;
         let muted = theme.muted_foreground;
         let border = theme.border;
+        let danger = theme.danger;
         let selected = self.selected;
+        let playhead = self.playhead;
+
+        // Geometry (pixels from the top of the axis).
+        let tick_h = 18.0;
+        let chip_top = 24.0;
+        let chip_h = 22.0;
+        let seg_top = chip_top + chip_h + 10.0;
+        let seg_bottom = AXIS_HEIGHT - 8.0;
+
+        let cues: Vec<(f32, Transition)> = self
+            .timeline
+            .cues
+            .iter()
+            .map(|c| (c.time, c.transition))
+            .collect();
+        let segment_color = muted.opacity(0.8);
 
         let mut axis = div()
             .relative()
             .w_full()
-            .h(px(TIMELINE_HEIGHT))
+            .h(px(AXIS_HEIGHT))
             .rounded_md()
             .border_1()
             .border_color(border)
             .bg(theme.muted.opacity(0.35))
             .overflow_hidden()
             .child(
-                canvas(move |bounds, _, _| bounds_cell.set(bounds), |_, _, _, _| {})
-                    .absolute()
-                    .inset_0(),
+                canvas(
+                    move |bounds, _, _| bounds_cell.set(bounds),
+                    move |bounds, _, window, _| {
+                        let w: f32 = bounds.size.width.into();
+                        let ox = bounds.origin.x;
+                        let oy = bounds.origin.y;
+                        let x_at = |t: f32| ox + px(w * (t / duration).clamp(0.0, 1.0));
+
+                        // Segment lane: hold at the bottom, ramp up to the next cue
+                        // when it interpolates, jump when it cuts.
+                        if let Some(first) = cues.first() {
+                            let mut path = PathBuilder::stroke(px(1.5));
+                            path.move_to(point(ox, oy + px(seg_bottom)));
+                            path.line_to(point(x_at(first.0), oy + px(seg_bottom)));
+                            for pair in cues.windows(2) {
+                                let (a, (b_time, b_transition)) = (pair[0].0, pair[1]);
+                                match b_transition {
+                                    Transition::Interpolate => {
+                                        path.move_to(point(x_at(a), oy + px(seg_bottom)));
+                                        path.line_to(point(x_at(b_time), oy + px(seg_top)));
+                                        path.move_to(point(x_at(b_time), oy + px(seg_top)));
+                                        path.line_to(point(x_at(b_time), oy + px(seg_bottom)));
+                                    }
+                                    Transition::Cut => {
+                                        path.move_to(point(x_at(a), oy + px(seg_bottom)));
+                                        path.line_to(point(x_at(b_time), oy + px(seg_bottom)));
+                                        path.move_to(point(x_at(b_time), oy + px(seg_bottom)));
+                                        path.line_to(point(x_at(b_time), oy + px(seg_top)));
+                                        path.move_to(point(x_at(b_time), oy + px(seg_top)));
+                                        path.line_to(point(x_at(b_time), oy + px(seg_bottom)));
+                                    }
+                                }
+                            }
+                            if let Some(last) = cues.last() {
+                                path.move_to(point(x_at(last.0), oy + px(seg_bottom)));
+                                path.line_to(point(ox + px(w), oy + px(seg_bottom)));
+                            }
+                            if let Ok(path) = path.build() {
+                                window.paint_path(path, segment_color);
+                            }
+                        }
+
+                        // Playhead: line across the axis with a head at the top.
+                        let px_x = x_at(playhead);
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(px_x - px(1.), oy),
+                                size: size(px(2.), px(AXIS_HEIGHT)),
+                            },
+                            danger,
+                        ));
+                        let mut head = PathBuilder::fill();
+                        head.move_to(point(px_x - px(6.), oy));
+                        head.line_to(point(px_x + px(6.), oy));
+                        head.line_to(point(px_x, oy + px(8.)));
+                        head.close();
+                        if let Ok(head) = head.build() {
+                            window.paint_path(head, danger);
+                        }
+                    },
+                )
+                .absolute()
+                .inset_0(),
             );
 
-        // Second ticks with labels. Thin out when the axis gets long.
+        // Ticks.
         let step = if duration > 60.0 {
             10.0
         } else if duration > 20.0 {
@@ -871,88 +1360,85 @@ impl TimelineApp {
         let mut t = 0.0;
         while t <= duration + 1e-3 {
             let frac = t / duration;
-            axis = axis.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left(relative(frac))
-                    .w(px(1.))
-                    .h(px(10.))
-                    .bg(muted.opacity(0.6)),
-            );
-            axis = axis.child(
-                div()
-                    .absolute()
-                    .top(px(12.))
-                    .left(relative(frac))
-                    .ml(px(3.))
-                    .text_xs()
-                    .text_color(muted)
-                    .child(format!("{t:.0}")),
-            );
-            t += step;
-        }
-
-        // Cue markers.
-        for cue in &self.timeline.cues {
-            let frac = (cue.time / duration).clamp(0.0, 1.0);
-            let is_selected = selected == Some(cue.id);
-            let color = if is_selected { accent } else { muted };
             axis = axis
                 .child(
                     div()
                         .absolute()
-                        .top(px(30.))
-                        .bottom_0()
+                        .top_0()
                         .left(relative(frac))
-                        .w(px(if is_selected { 3. } else { 2. }))
-                        .ml(px(if is_selected { -1.5 } else { -1. }))
-                        .bg(color),
+                        .w(px(1.))
+                        .h(px(6.))
+                        .bg(muted.opacity(0.6)),
                 )
                 .child(
                     div()
                         .absolute()
-                        .top(px(30.))
+                        .top(px(4.))
                         .left(relative(frac))
-                        .ml(px(-7.))
-                        .w(px(14.))
-                        .h(px(14.))
-                        .rounded_full()
-                        .bg(color)
-                        .border_1()
-                        .border_color(theme.background),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(48.))
-                        .left(relative(frac))
-                        .ml(px(6.))
+                        .ml(px(3.))
                         .text_xs()
-                        .text_color(color)
-                        .child(format!(
-                            "{}{}",
-                            cue.label,
-                            match cue.transition {
-                                Transition::Cut => " ⌐",
-                                Transition::Interpolate => " ⟋",
-                            }
-                        )),
+                        .text_color(muted)
+                        .child(format!("{t:.0}")),
                 );
+            t += step;
         }
+        let _ = tick_h;
 
-        // Playhead.
-        let frac = (self.playhead / duration).clamp(0.0, 1.0);
-        axis = axis.child(
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(relative(frac))
-                .w(px(2.))
-                .ml(px(-1.))
-                .bg(theme.danger),
-        );
+        // Cue chips.
+        for cue in &self.timeline.cues {
+            let frac = (cue.time / duration).clamp(0.0, 1.0);
+            let is_selected = selected == Some(cue.id);
+            let id = cue.id;
+            let glyph = match cue.transition {
+                Transition::Cut => "⌐",
+                Transition::Interpolate => "⟋",
+            };
+            axis = axis.child(
+                h_flex()
+                    .id(("cue", id as usize))
+                    .absolute()
+                    .top(px(chip_top))
+                    .left(relative(frac))
+                    .ml(px(-6.))
+                    .h(px(chip_h))
+                    .px_2()
+                    .gap_1()
+                    .items_center()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if is_selected { primary } else { border })
+                    .bg(if is_selected {
+                        primary
+                    } else {
+                        theme.background
+                    })
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(if is_selected {
+                                theme.primary_foreground
+                            } else {
+                                muted
+                            })
+                            .child(glyph),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(if is_selected {
+                                theme.primary_foreground
+                            } else {
+                                theme.foreground
+                            })
+                            .child(cue.label.clone()),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| this.cue_mouse_down(id, window, cx)),
+                    ),
+            );
+        }
 
         axis.id("axis")
             .on_mouse_down(
@@ -975,62 +1461,7 @@ impl TimelineApp {
             .into_any_element()
     }
 
-    // ---- graph viewport ------------------------------------------------------
-
-    fn graph_mouse_down(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) {
-        self.graph_drag = Some((ev.position, self.graph_pan));
-        cx.notify();
-    }
-
-    fn graph_mouse_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
-        if let Some((start, pan)) = self.graph_drag {
-            let dx: f32 = (ev.position.x - start.x).into();
-            let dy: f32 = (ev.position.y - start.y).into();
-            self.graph_pan = point(pan.x + dx, pan.y + dy);
-            cx.notify();
-        }
-    }
-
-    fn graph_mouse_up(&mut self, cx: &mut Context<Self>) {
-        self.graph_drag = None;
-        cx.notify();
-    }
-
-    fn graph_scroll(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        let delta = ev.delta.pixel_delta(px(24.));
-        let dx: f32 = delta.x.into();
-        let dy: f32 = delta.y.into();
-        // Plain wheel scrolls the chain horizontally; shift (or a trackpad's
-        // horizontal axis) moves it the other way.
-        if ev.modifiers.shift {
-            self.graph_pan = point(self.graph_pan.x + dy, self.graph_pan.y + dx);
-        } else {
-            self.graph_pan = point(self.graph_pan.x + dx + dy, self.graph_pan.y);
-        }
-        cx.notify();
-    }
-
-    /// Centre the graph in its viewport (left-aligned when it is wider).
-    fn graph_fit(&mut self, content: (f32, f32), cx: &mut Context<Self>) {
-        let viewport = self.graph_viewport.get();
-        let vw: f32 = viewport.size.width.into();
-        let vh: f32 = viewport.size.height.into();
-        if vw <= 0.0 {
-            return;
-        }
-        let x = if content.0 <= vw {
-            (vw - content.0) / 2.0
-        } else {
-            0.0
-        };
-        let y = ((vh - content.1) / 2.0).max(0.0);
-        self.graph_pan = point(x, y);
-        self.graph_fit_pending = false;
-        cx.notify();
-    }
-
-    /// Read-only picture of the renderer's node graph: sources on the left,
-    /// the output on the right, one column per dependency depth.
+    /// Read-only picture of the renderer's node graph, pannable.
     fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let Some(graph) = self.graph.clone() else {
@@ -1043,11 +1474,9 @@ impl TimelineApp {
                 .child("waiting for the renderer to send its graph…")
                 .into_any_element();
         };
-
-        // Layout: column = depth, row = position within that column, in graph order.
         let depths = structure_depths(&graph);
         let mut rows_in_col: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut placed: BTreeMap<zygote_core::NodeId, (usize, usize)> = BTreeMap::new();
+        let mut placed: BTreeMap<NodeId, (usize, usize)> = BTreeMap::new();
         for node in &graph.nodes {
             let col = depths.get(&node.id).copied().unwrap_or(0);
             let row = rows_in_col.entry(col).or_insert(0);
@@ -1056,7 +1485,6 @@ impl TimelineApp {
         }
         let cols = rows_in_col.keys().max().map(|c| c + 1).unwrap_or(1);
         let rows = rows_in_col.values().copied().max().unwrap_or(1);
-        // One extra column for the window the output feeds.
         let width = GRAPH_PAD * 2.0 + (cols as f32 + 1.0) * NODE_W + cols as f32 * COL_GAP;
         let height =
             GRAPH_PAD * 2.0 + rows as f32 * NODE_H + (rows as f32 - 1.0).max(0.0) * ROW_GAP;
@@ -1072,8 +1500,6 @@ impl TimelineApp {
             )
         };
 
-        // Edges are drawn on a canvas underneath the boxes. Collect them as
-        // (from right-middle, to left edge at the slot's height).
         let mut edges: Vec<((f32, f32), (f32, f32))> = Vec::new();
         for node in &graph.nodes {
             let Some(&(col, row)) = placed.get(&node.id) else {
@@ -1091,7 +1517,6 @@ impl TimelineApp {
                 edges.push(((ix + NODE_W, iy + NODE_H / 2.0), (x, slot_y)));
             }
         }
-        // Output → window.
         let window_col = cols;
         if let Some(&(col, row)) = placed.get(&graph.output) {
             let (x, y) = pos(col, row);
@@ -1123,7 +1548,6 @@ impl TimelineApp {
                             if let Ok(path) = path.build() {
                                 window.paint_path(path, edge_color);
                             }
-                            // Arrow head.
                             let mut head = PathBuilder::fill();
                             head.move_to(to);
                             head.line_to(point(to.x - px(7.), to.y - px(4.)));
@@ -1146,7 +1570,6 @@ impl TimelineApp {
             let (x, y) = pos(col, row);
             let is_output = node.id == graph.output;
             let is_source = node.inputs.is_empty();
-            let slot_names: Vec<String> = node.inputs.iter().map(|l| l.name.clone()).collect();
             let mut slots = v_flex().justify_around().h_full().pr_1();
             for link in &node.inputs {
                 let connected = link.from.is_some();
@@ -1184,7 +1607,7 @@ impl TimelineApp {
                         theme.background
                     })
                     .when(!node.enabled, |d| d.opacity(0.45))
-                    .when(!slot_names.is_empty(), |d| d.child(slots))
+                    .when(!node.inputs.is_empty(), |d| d.child(slots))
                     .child(
                         v_flex()
                             .flex_1()
@@ -1210,8 +1633,6 @@ impl TimelineApp {
                     ),
             );
         }
-
-        // The window the output feeds.
         let (wx, wy) = pos(window_col, 0);
         view = view.child(
             v_flex()
@@ -1231,7 +1652,7 @@ impl TimelineApp {
                         .text_sm()
                         .truncate()
                         .text_color(theme.foreground)
-                        .child("window"),
+                        .child("output window"),
                 )
                 .child(
                     div()
@@ -1309,6 +1730,7 @@ impl TimelineApp {
     fn render_params(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let values = self.effective_values();
+        let mode = self.mode();
         let mut list = v_flex().gap_1().w_full();
         if self.params.is_empty() {
             list = list.child(
@@ -1321,6 +1743,11 @@ impl TimelineApp {
         let mut last_node: Option<NodeId> = None;
         for (i, control) in self.params.iter().enumerate() {
             let path = control.desc.path.clone();
+            if let Some(filter) = &self.selected_node
+                && filter != &path.node
+            {
+                continue;
+            }
             if last_node.as_ref() != Some(&path.node) {
                 last_node = Some(path.node.clone());
                 let kind = self
@@ -1350,11 +1777,14 @@ impl TimelineApp {
                 );
             }
             let overridden = self.overrides.contains_key(&path);
+            let in_cue = matches!(mode, Mode::Edit(id) if self.timeline.cue(id).is_some_and(|c| c.values.contains_key(&path)));
             let value = values
                 .get(&path)
                 .cloned()
                 .unwrap_or_else(|| control.desc.value.clone());
             let label_color = if overridden {
+                theme.warning
+            } else if in_cue {
                 theme.primary
             } else {
                 theme.foreground
@@ -1367,7 +1797,7 @@ impl TimelineApp {
                     Switch::new(("switch", i))
                         .checked(checked)
                         .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                            this.set_manual(&path, ParamValue::Bool(*checked), cx)
+                            this.set_value(&path, ParamValue::Bool(*checked), cx)
                         }))
                         .into_any_element()
                 }
@@ -1384,7 +1814,7 @@ impl TimelineApp {
                                 .label(option.clone())
                                 .when(selected, |b| b.primary())
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_manual(
+                                    this.set_value(
                                         &path,
                                         ParamValue::Choice(option_value.clone()),
                                         cx,
@@ -1438,25 +1868,39 @@ impl TimelineApp {
                     }
                     row.into_any_element()
                 }
-                (ParamType::Float { .. }, _) => match control.sliders.first() {
-                    Some(slider) => Slider::new(slider).flex_1().into_any_element(),
-                    None => div().into_any_element(),
-                },
+                (ParamType::Float { .. } | ParamType::Int { .. }, _) => {
+                    match control.sliders.first() {
+                        Some(slider) => Slider::new(slider).flex_1().into_any_element(),
+                        None => div().into_any_element(),
+                    }
+                }
             };
 
+            let reset_path = path.clone();
             list = list.child(
                 h_flex()
+                    .id(("param-row", i))
                     .gap_2()
                     .items_center()
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .when(overridden, |d| d.bg(theme.primary.opacity(0.08)))
+                    .when(overridden, |d| d.bg(theme.warning.opacity(0.08)))
+                    // Capture phase so the slider underneath cannot swallow the double-click.
+                    .capture_any_mouse_down(cx.listener(
+                        move |this, ev: &MouseDownEvent, window, cx| {
+                            if ev.click_count >= 2 {
+                                this.reset_to_default(&reset_path, window, cx);
+                                cx.stop_propagation();
+                            }
+                        },
+                    ))
                     .child(
                         div()
-                            .w(px(190.))
+                            .w(px(170.))
                             .pl_3()
                             .text_sm()
+                            .truncate()
                             .text_color(label_color)
                             .child(path.param.clone()),
                     )
@@ -1472,7 +1916,13 @@ impl TimelineApp {
                     .child(
                         Button::new(("release", i))
                             .xsmall()
-                            .label(if overridden { "manual ✕" } else { "cue" })
+                            .label(if overridden {
+                                "live ✕"
+                            } else if in_cue {
+                                "in cue"
+                            } else {
+                                "default"
+                            })
                             .disabled(!overridden)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.release_override(&path, window, cx)
@@ -1493,45 +1943,115 @@ impl Render for TimelineApp {
         let header = h_flex()
             .items_center()
             .gap_3()
-            .child(div().text_lg().child("Zygote timeline"))
-            .child(div().flex_1())
+            .child(div().text_lg().child("Zygote"))
+            .child(div().flex_1().min_w_0().text_xs().truncate().text_color(muted).child(
+                "space play · esc stop · [ ] cues · ⏎ add cue · e live/edit · l loop · t tile · double-click resets",
+            ))
+            .child(
+                Button::new("tile")
+                    .small()
+                    .label(if self.tiled { "Re-tile output" } else { "Tile output →" })
+                    .disabled(self.sender.is_none())
+                    .on_click(cx.listener(|this, _, window, cx| this.tile(window, cx))),
+            )
+            .child(
+                Button::new("release-output")
+                    .small()
+                    .label("Pop out")
+                    .disabled(!self.tiled)
+                    .on_click(cx.listener(|this, _, _, cx| this.release_output(cx))),
+            )
             .child(
                 Button::new("release-all")
                     .small()
-                    .label("Release all manual overrides")
+                    .label("Release live")
                     .disabled(self.overrides.is_empty())
                     .on_click(cx.listener(|this, _, window, cx| this.release_all(window, cx))),
             );
+        let rail = self.render_rail(cx);
         let transport = self.render_transport(cx);
-        let graph = self.render_graph(cx);
+        let graph = if self.show_graph {
+            Some(self.render_graph(cx))
+        } else {
+            None
+        };
         let axis = self.render_axis(cx);
         let cue_bar = self.render_cue_bar(cx);
         let params = self.render_params(cx);
 
+        let mut main = v_flex().flex_1().min_w_0().gap_3().child(transport);
+        if let Some(graph) = graph {
+            main = main.child(graph);
+        }
+        main = main.child(axis).child(cue_bar).child(
+            div()
+                .id("params")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(params),
+        );
+
         v_flex()
+            .id("root")
+            .track_focus(&self.focus_handle)
+            .key_context("Zygote")
+            .capture_action(cx.listener(|this, _: &TogglePlay, _, cx| {
+                this.toggle_play(cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &Stop, window, cx| {
+                this.stop(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &GoToStart, window, cx| {
+                this.seek(0.0, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &PrevCue, window, cx| {
+                this.step_cue(false, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &NextCue, window, cx| {
+                this.step_cue(true, window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &AddCue, _, cx| {
+                this.add_cue(cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &ToggleLoop, _, cx| {
+                this.timeline.looping = !this.timeline.looping;
+                cx.notify();
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &ToggleLive, _, cx| {
+                this.force_live = !this.force_live;
+                cx.notify();
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &TileOutput, window, cx| {
+                this.tile(window, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &PopOut, _, cx| {
+                this.release_output(cx);
+                cx.stop_propagation();
+            }))
             .size_full()
             .bg(background)
             .text_color(foreground)
             .p_4()
             .gap_3()
             .child(header)
-            .child(graph)
-            .child(transport)
-            .child(axis)
-            .child(cue_bar)
             .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child("Click the axis to scrub, drag a marker to move a cue. Moving a slider takes manual control of that parameter until released."),
-            )
-            .child(
-                div()
-                    .id("params")
+                h_flex()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .child(params),
+                    .gap_4()
+                    .items_start()
+                    .child(rail)
+                    .child(main),
             )
             .child(div().text_xs().text_color(muted).child(self.status.clone()))
     }
@@ -1540,8 +2060,6 @@ impl Render for TimelineApp {
 /// Longest-path depth per node of a UI structure (sources are 0).
 fn structure_depths(graph: &GraphStructure) -> BTreeMap<NodeId, usize> {
     let mut depths: BTreeMap<NodeId, usize> = BTreeMap::new();
-    // Nodes arrive in graph order, which is not necessarily topological; iterate
-    // until stable (graphs are small and acyclic).
     for _ in 0..graph.nodes.len().max(1) {
         let mut changed = false;
         for node in &graph.nodes {
@@ -1563,16 +2081,6 @@ fn structure_depths(graph: &GraphStructure) -> BTreeMap<NodeId, usize> {
         }
     }
     depths
-}
-
-fn step_for(desc: &ParamDescriptor, range: f32) -> f32 {
-    let range = range.abs().max(1e-6);
-    // Integer-ish float controls snap to whole numbers.
-    let integer_like = matches!(
-        desc.path.param.as_str(),
-        "posterize" | "octaves" | "segments"
-    );
-    if integer_like { 1.0 } else { range / 1000.0 }
 }
 
 /// Two cues so the first run already demonstrates interpolation on the

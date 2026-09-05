@@ -24,7 +24,7 @@ use zygote_core::{
 };
 
 use crate::materials::{Fallbacks, FrameUniform, NodeMaterial, ParamsBlob, node_sampler};
-use crate::params::ParamState;
+use crate::params::{FrameClock, ParamState};
 use crate::plugin::{GraphRes, LibraryRes, NodeResolution};
 
 /// First render layer used by node passes. Layer 0 belongs to the window.
@@ -463,14 +463,14 @@ pub fn apply_params(
     runtime: Res<Runtime>,
     library: Res<LibraryRes>,
     state: Res<ParamState>,
-    time: Res<Time>,
+    clock: Res<FrameClock>,
     resolution: Res<NodeResolution>,
     mut materials: ResMut<Assets<NodeMaterial>>,
 ) {
     let aspect = resolution.aspect();
     let frame_base = FrameUniform {
-        time: time.elapsed_secs(),
-        dt: time.delta_secs(),
+        time: clock.time,
+        dt: clock.dt,
         aspect,
         index: runtime.frame as f32,
         ..Default::default()

@@ -4,7 +4,7 @@
 //! param scale: float = 2.5 in 0.5..12 "Noise scale"
 //! param speed: float = 0.2 in 0..2 "Outward drift"
 //! param turbulence: float = 0.35 in 0..2 "How fast the noise itself evolves"
-//! param octaves: float = 5 in 1..6 "Noise detail"
+//! param octaves: int = 5 in 1..6 "Noise detail"
 //! param core: float = 0.12 in 0.01..1 "Radius of the bright core"
 //! param falloff: float = 1.8 in 0.2..6 "How quickly the haze thins with distance"
 //! param threshold: float = 0.35 in 0..1 "Noise level below which haze is invisible"
@@ -21,7 +21,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // and stretch it radially so it reads as streaks emitted from the centre.
     let radial = vec2<f32>(r * params.scale - t * params.speed * params.scale, atan2(dir.y, dir.x) * 2.5);
     let q = vec3<f32>(radial, t * params.turbulence);
-    var n = fbm3(q, i32(round(params.octaves)));
+    var n = fbm3(q, params.octaves);
     n = 0.5 + 0.5 * n;
     n = smoothstep(params.threshold, 1.0, n);
 

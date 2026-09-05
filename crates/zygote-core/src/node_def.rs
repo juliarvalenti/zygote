@@ -93,6 +93,7 @@ impl NodeDef {
     /// //! input displacement optional
     /// //! feedback
     /// //! param amount: float = 0.15 in 0..1 "Displacement strength"
+    /// //! param octaves: int = 4 in 1..6 "Detail"
     /// //! param mode: choice = screen [multiply, screen, add, alpha] "Operator"
     /// //! param invert: bool = false
     /// //! param tint: color = #ff8844
@@ -239,6 +240,10 @@ impl NodeDef {
             let count = match (&value, &spec.ty) {
                 (ParamValue::Float(v), _) => {
                     words[0] = *v;
+                    1
+                }
+                (ParamValue::Int(v), _) => {
+                    words[0] = f32::from_bits(*v as u32);
                     1
                 }
                 (ParamValue::Bool(b), _) => {
@@ -430,6 +435,13 @@ fn parse_param(args: &str) -> Result<ParamSpec, String> {
                 .map_err(|_| format!("bad float default `{default_text}`"))?;
             ParamSpec::float(name, min, max, default, &doc)
         }
+        "int" | "i32" => {
+            let (min, max) = range.unwrap_or((0.0, 100.0));
+            let default: i32 = default_text
+                .parse()
+                .map_err(|_| format!("bad int default `{default_text}`"))?;
+            ParamSpec::int(name, min.round() as i32, max.round() as i32, default, &doc)
+        }
         "bool" => {
             let default = match default_text {
                 "true" | "on" | "1" => true,
@@ -510,6 +522,7 @@ impl UniformLayout {
         for spec in params {
             let (size, align, wgsl_type) = match spec.ty.kind() {
                 ParamKind::Float => (4, 4, "f32"),
+                ParamKind::Int => (4, 4, "i32"),
                 ParamKind::Bool | ParamKind::Choice => (4, 4, "u32"),
                 ParamKind::Vec2 => (8, 8, "vec2<f32>"),
                 ParamKind::Color => (16, 16, "vec4<f32>"),
@@ -651,6 +664,7 @@ mod tests {
 //! param invert: bool = false
 //! param tint: color = #ff8040
 //! param offset: vec2 = 0, 0.5 in -1..1
+//! param steps: int = 3 in 1..8 "Whole steps"
 #import zygote::common::{rotate2}
 
 @fragment
@@ -667,7 +681,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         assert_eq!(def.input_names(), vec!["source", "mask"]);
         assert_eq!(def.required_inputs(), 1);
         assert!(def.feedback);
-        assert_eq!(def.params.len(), 5);
+        assert_eq!(def.params.len(), 6);
+        assert_eq!(
+            def.params[5],
+            ParamSpec::int("steps", 1, 8, 3, "Whole steps")
+        );
         assert_eq!(
             def.params[0],
             ParamSpec::float("segments", 1.0, 24.0, 6.0, "Number of wedges")
@@ -701,9 +719,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let def = NodeDef::parse_wgsl("k", SAMPLE, NodeOrigin::Builtin).unwrap();
         let layout = def.uniform_layout();
         let offsets: Vec<usize> = layout.fields.iter().map(|f| f.offset).collect();
-        // f32 @0, u32 @4, u32 @8, vec4 @16 (aligned), vec2 @32
-        assert_eq!(offsets, vec![0, 4, 8, 16, 32]);
+        // f32 @0, u32 @4, u32 @8, vec4 @16 (aligned), vec2 @32, i32 @40
+        assert_eq!(offsets, vec![0, 4, 8, 16, 32, 40]);
         assert_eq!(layout.size, 48);
+        assert!(layout.wgsl_struct("P").contains("steps: i32"));
         let wgsl = layout.wgsl_struct("P");
         assert!(wgsl.contains("_pad0: f32"), "{wgsl}");
         assert!(wgsl.contains("tint: vec4<f32>"), "{wgsl}");
@@ -725,6 +744,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         assert_eq!(u(8), 1);
         assert!((f(16) - 1.0).abs() < 1e-6, "tint.r");
         assert_eq!(f(36), 0.5, "offset.y");
+        assert_eq!(u(40), 3, "steps");
     }
 
     #[test]

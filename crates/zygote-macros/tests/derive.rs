@@ -17,12 +17,15 @@ struct Kaleido {
     #[param(default = [0.0, 0.5], min = -1.0, max = 1.0)]
     offset: [f32; 2],
     plain: f32,
+    #[param(default = 3, min = 1, max = 8)]
+    steps: i32,
 }
 
 #[test]
 fn specs_follow_field_order_and_attributes() {
     let specs = Kaleido::specs();
-    assert_eq!(specs.len(), 6);
+    assert_eq!(specs.len(), 7);
+    assert_eq!(specs[6], ParamSpec::int("steps", 1, 8, 3, ""));
     assert_eq!(
         specs[0],
         ParamSpec::float("segments", 1.0, 24.0, 6.0, "Number of mirror wedges")
@@ -63,5 +66,5 @@ fn default_and_values_roundtrip() {
 fn specs_build_a_node_def_layout() {
     let layout = zygote_core::UniformLayout::for_params(&Kaleido::specs());
     let offsets: Vec<usize> = layout.fields.iter().map(|f| f.offset).collect();
-    assert_eq!(offsets, vec![0, 4, 8, 16, 32, 40]);
+    assert_eq!(offsets, vec![0, 4, 8, 16, 32, 40, 44]);
 }

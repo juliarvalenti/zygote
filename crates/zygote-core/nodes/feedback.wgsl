@@ -14,7 +14,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let aspect = frame.aspect;
     // Decay, zoom, rotation and hue shift are specified per 1/60 s and scaled
     // by the real frame time, so the look does not depend on the refresh rate.
-    let steps = clamp(frame.dt * 60.0, 0.1, 10.0);
+    // A zero-length frame (transport paused) leaves the trail exactly as it was.
+    let steps = clamp(frame.dt * 60.0, 0.0, 10.0);
     let zoom = pow(max(params.zoom, 1e-3), steps);
     let decay = pow(max(params.decay, 1e-4), steps);
     let centred = (in.uv - 0.5) * vec2<f32>(aspect, 1.0);

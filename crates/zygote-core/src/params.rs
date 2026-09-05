@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamValue {
     Float(f32),
+    /// Whole number; tweens step through intermediate integers.
+    Int(i32),
     Bool(bool),
     /// One of a fixed set of named options (a blend mode, a palette…).
     Choice(String),
@@ -27,6 +29,7 @@ impl ParamValue {
     pub const fn kind(&self) -> ParamKind {
         match self {
             ParamValue::Float(_) => ParamKind::Float,
+            ParamValue::Int(_) => ParamKind::Int,
             ParamValue::Bool(_) => ParamKind::Bool,
             ParamValue::Choice(_) => ParamKind::Choice,
             ParamValue::Color(_) => ParamKind::Color,
@@ -37,6 +40,15 @@ impl ParamValue {
     pub fn as_float(&self) -> Option<f32> {
         match self {
             ParamValue::Float(v) => Some(*v),
+            ParamValue::Int(v) => Some(*v as f32),
+            _ => None,
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i32> {
+        match self {
+            ParamValue::Int(v) => Some(*v),
+            ParamValue::Float(v) => Some(v.round() as i32),
             _ => None,
         }
     }
@@ -72,12 +84,16 @@ impl ParamValue {
     /// Interpolate from `self` towards `to` by `t` in `0..=1`.
     ///
     /// * floats, vec2 and colors (linear RGB) lerp,
+    /// * ints lerp and round, stepping through the values in between,
     /// * bools and choices hold `self` and switch to `to` when `t` reaches 1,
     /// * mismatched kinds hold `self` until `t` reaches 1.
     pub fn interpolate(&self, to: &ParamValue, t: f32) -> ParamValue {
         let t = t.clamp(0.0, 1.0);
         match (self, to) {
             (ParamValue::Float(a), ParamValue::Float(b)) => ParamValue::Float(a + (b - a) * t),
+            (ParamValue::Int(a), ParamValue::Int(b)) => {
+                ParamValue::Int((*a as f32 + (*b - *a) as f32 * t).round() as i32)
+            }
             (ParamValue::Vec2(a), ParamValue::Vec2(b)) => {
                 ParamValue::Vec2([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])
             }
@@ -138,6 +154,7 @@ impl fmt::Display for ParamValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParamValue::Float(v) => write!(f, "{v:.3}"),
+            ParamValue::Int(v) => write!(f, "{v}"),
             ParamValue::Bool(v) => write!(f, "{v}"),
             ParamValue::Choice(v) => f.write_str(v),
             ParamValue::Color(c) => f.write_str(&ParamValue::to_hex_color(*c)),
@@ -149,6 +166,12 @@ impl fmt::Display for ParamValue {
 impl From<f32> for ParamValue {
     fn from(v: f32) -> Self {
         ParamValue::Float(v)
+    }
+}
+
+impl From<i32> for ParamValue {
+    fn from(v: i32) -> Self {
+        ParamValue::Int(v)
     }
 }
 
@@ -179,11 +202,13 @@ impl From<[f32; 2]> for ParamValue {
     }
 }
 
-/// Untagged wire/file representation.
+/// Untagged wire/file representation. Whole numbers read back as `Int`;
+/// `ParamType::conform` coerces to the declared kind either way.
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum ValueRepr {
     Bool(bool),
+    Int(i64),
     Float(f32),
     Text(String),
     Vec2([f32; 2]),
@@ -194,6 +219,7 @@ impl Serialize for ParamValue {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let repr = match self {
             ParamValue::Float(v) => ValueRepr::Float(*v),
+            ParamValue::Int(v) => ValueRepr::Int(*v as i64),
             ParamValue::Bool(v) => ValueRepr::Bool(*v),
             ParamValue::Choice(v) => ValueRepr::Text(v.clone()),
             ParamValue::Color(c) => ValueRepr::Text(ParamValue::to_hex_color(*c)),
@@ -207,6 +233,7 @@ impl<'de> Deserialize<'de> for ParamValue {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(match ValueRepr::deserialize(deserializer)? {
             ValueRepr::Bool(v) => ParamValue::Bool(v),
+            ValueRepr::Int(v) => ParamValue::Int(v.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
             ValueRepr::Float(v) => ParamValue::Float(v),
             ValueRepr::Text(s) => ParamValue::from(s.as_str()),
             ValueRepr::Vec2(v) => ParamValue::Vec2(v),
@@ -220,6 +247,7 @@ impl<'de> Deserialize<'de> for ParamValue {
 #[serde(rename_all = "snake_case")]
 pub enum ParamKind {
     Float,
+    Int,
     Bool,
     Choice,
     Color,
@@ -231,6 +259,7 @@ pub enum ParamKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParamType {
     Float { min: f32, max: f32 },
+    Int { min: i32, max: i32 },
     Bool,
     Choice { options: Vec<String> },
     Color,
@@ -241,6 +270,7 @@ impl ParamType {
     pub const fn kind(&self) -> ParamKind {
         match self {
             ParamType::Float { .. } => ParamKind::Float,
+            ParamType::Int { .. } => ParamKind::Int,
             ParamType::Bool => ParamKind::Bool,
             ParamType::Choice { .. } => ParamKind::Choice,
             ParamType::Color => ParamKind::Color,
@@ -259,11 +289,24 @@ impl ParamType {
             (ParamType::Float { min, max }, ParamValue::Float(v)) => {
                 ParamValue::Float(v.clamp(min.min(*max), max.max(*min)))
             }
+            (ParamType::Float { min, max }, ParamValue::Int(v)) => {
+                ParamValue::Float((*v as f32).clamp(min.min(*max), max.max(*min)))
+            }
             (ParamType::Float { min, max }, ParamValue::Bool(b)) => {
                 ParamValue::Float(if *b { *max } else { *min })
             }
+            (ParamType::Int { min, max }, ParamValue::Int(v)) => {
+                ParamValue::Int((*v).clamp(*min.min(max), *max.max(min)))
+            }
+            (ParamType::Int { min, max }, ParamValue::Float(v)) => {
+                ParamValue::Int((v.round() as i32).clamp(*min.min(max), *max.max(min)))
+            }
+            (ParamType::Int { min, .. }, ParamValue::Bool(b)) => {
+                ParamValue::Int(if *b { *min + 1 } else { *min })
+            }
             (ParamType::Bool, ParamValue::Bool(b)) => ParamValue::Bool(*b),
             (ParamType::Bool, ParamValue::Float(v)) => ParamValue::Bool(*v >= 0.5),
+            (ParamType::Bool, ParamValue::Int(v)) => ParamValue::Bool(*v != 0),
             (ParamType::Choice { options }, ParamValue::Choice(c)) => {
                 if options.iter().any(|o| o == c) {
                     ParamValue::Choice(c.clone())
@@ -273,6 +316,11 @@ impl ParamType {
             }
             (ParamType::Choice { options }, ParamValue::Float(v)) => {
                 let idx = (v.round().max(0.0) as usize).min(options.len().saturating_sub(1));
+                ParamValue::Choice(options.get(idx).cloned().unwrap_or_default())
+            }
+            (ParamType::Choice { options }, ParamValue::Int(v)) => {
+                let idx = (*v).max(0) as usize;
+                let idx = idx.min(options.len().saturating_sub(1));
                 ParamValue::Choice(options.get(idx).cloned().unwrap_or_default())
             }
             (ParamType::Color, ParamValue::Color(c)) => {
@@ -289,6 +337,7 @@ impl ParamType {
     pub fn default_value(&self) -> ParamValue {
         match self {
             ParamType::Float { min, max } => ParamValue::Float(min.min(*max)),
+            ParamType::Int { min, max } => ParamValue::Int(*min.min(max)),
             ParamType::Bool => ParamValue::Bool(false),
             ParamType::Choice { options } => {
                 ParamValue::Choice(options.first().cloned().unwrap_or_default())
@@ -327,6 +376,15 @@ impl ParamSpec {
             name: name.to_owned(),
             ty: ParamType::Float { min, max },
             default: ParamValue::Float(default),
+            doc: doc.to_owned(),
+        }
+    }
+
+    pub fn int(name: &str, min: i32, max: i32, default: i32, doc: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            ty: ParamType::Int { min, max },
+            default: ParamValue::Int(default),
             doc: doc.to_owned(),
         }
     }
@@ -396,6 +454,7 @@ mod tests {
     fn values_roundtrip_untagged() {
         for (json, value) in [
             ("0.5", ParamValue::Float(0.5)),
+            ("3", ParamValue::Int(3)),
             ("true", ParamValue::Bool(true)),
             ("\"screen\"", ParamValue::Choice("screen".into())),
             (
@@ -426,6 +485,16 @@ mod tests {
         let off = ParamValue::Bool(false);
         assert_eq!(off.interpolate(&ParamValue::Bool(true), 0.5), off);
 
+        let two = ParamValue::Int(2);
+        assert_eq!(
+            two.interpolate(&ParamValue::Int(6), 0.5),
+            ParamValue::Int(4)
+        );
+        assert_eq!(
+            two.interpolate(&ParamValue::Int(6), 0.1),
+            ParamValue::Int(2)
+        );
+
         let black = ParamValue::Color([0.0, 0.0, 0.0, 1.0]);
         let white = ParamValue::Color([1.0, 1.0, 1.0, 1.0]);
         assert_eq!(
@@ -438,6 +507,11 @@ mod tests {
     fn conform_clamps_and_coerces() {
         let ty = ParamType::Float { min: 0.0, max: 1.0 };
         assert_eq!(ty.conform(&ParamValue::Float(4.0)), ParamValue::Float(1.0));
+        // A whole number in a file (`"amount": 1`) reads as Int and conforms to the declared float.
+        assert_eq!(ty.conform(&ParamValue::Int(1)), ParamValue::Float(1.0));
+        let int = ParamType::Int { min: 1, max: 6 };
+        assert_eq!(int.conform(&ParamValue::Float(4.4)), ParamValue::Int(4));
+        assert_eq!(int.conform(&ParamValue::Int(99)), ParamValue::Int(6));
         let choice = ParamType::Choice {
             options: vec!["a".into(), "b".into()],
         };

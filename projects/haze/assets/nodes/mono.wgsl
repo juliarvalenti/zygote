@@ -7,7 +7,7 @@
 //! param vignette: float = 0.7 in 0..2 "Edge darkening"
 //! param glitch: float = 0.25 in 0..1 "Horizontal band displacement"
 //! param glitch_rate: float = 5 in 0..30 "Glitch updates per second"
-//! param bands: float = 28 in 4..200 "Glitch band count"
+//! param bands: int = 28 in 4..200 "Glitch band count"
 //! param invert: bool = false "White background"
 #import zygote::common::{luma}
 
@@ -20,7 +20,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var uv = in.uv;
 
     // Glitch: a few horizontal bands jump sideways, re-rolled `glitch_rate` times a second.
-    let band = floor(uv.y * params.bands);
+    let band = floor(uv.y * f32(params.bands));
     let seed = floor(frame.time * params.glitch_rate);
     let roll = hash21(vec2<f32>(band, seed));
     if roll > 1.0 - params.glitch * 0.25 {

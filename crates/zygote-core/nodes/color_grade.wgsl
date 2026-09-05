@@ -4,7 +4,7 @@
 //! input lut optional
 //! param hue: float = 0 in -0.5..0.5 "Hue rotation (turns)"
 //! param saturation: float = 1 in 0..3 "Saturation multiplier"
-//! param posterize: float = 0 in 0..32 "Levels per channel, 0 = off"
+//! param posterize: int = 0 in 0..32 "Levels per channel, 0 = off"
 //! param preset: choice = spectrum [spectrum, cool, warm, ember, neon] "Built-in cosine palette"
 //! param palette_mix: float = 0 in 0..1 "Palette remap amount"
 //! param lut_mix: float = 0 in 0..1 "LUT remap amount (lut input: horizontal strip indexed by luminance)"
@@ -16,8 +16,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     c = hue_rotate(c, params.hue);
     let l = luma(c);
     c = mix(vec3<f32>(l), c, params.saturation);
-    if params.posterize >= 1.0 {
-        c = floor(c * params.posterize + 0.5) / params.posterize;
+    if params.posterize >= 1 {
+        let levels = f32(params.posterize);
+        c = floor(c * levels + 0.5) / levels;
     }
     let l2 = clamp(luma(c), 0.0, 1.0);
     c = mix(c, palette(l2, f32(params.preset)), params.palette_mix);

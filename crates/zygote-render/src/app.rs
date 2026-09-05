@@ -145,6 +145,12 @@ impl ZygoteApp {
         self
     }
 
+    /// Always run on the wall clock, ignoring the UI's transport.
+    pub fn free_run(mut self) -> Self {
+        self.settings.free_run = true;
+        self
+    }
+
     pub fn port(mut self, port: u16) -> Self {
         self.settings.port = port;
         self
@@ -169,7 +175,7 @@ impl ZygoteApp {
     ///
     /// ```text
     /// [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR]
-    /// [--showcase] [--capture out.png [--frames N] [--every K]]
+    /// [--showcase] [--free-run] [--capture out.png [--frames N] [--every K]]
     /// ```
     pub fn parse_args(mut self) -> Self {
         let mut args = std::env::args().skip(1);
@@ -226,6 +232,7 @@ impl ZygoteApp {
                     self.settings.graph = Graph::showcase();
                     self.graph_file = None;
                 }
+                "--free-run" => self.settings.free_run = true,
                 "-h" | "--help" => usage(""),
                 path if !path.starts_with('-') => self.graph_file = Some(PathBuf::from(path)),
                 other => usage(&format!("unknown argument {other}")),
@@ -304,7 +311,7 @@ fn usage(error: &str) -> ! {
         eprintln!("error: {error}\n");
     }
     eprintln!(
-        "usage: <project> [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR] [--showcase] [--capture out.png [--frames N] [--every K]]"
+        "usage: <project> [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR] [--showcase] [--free-run] [--capture out.png [--frames N] [--every K]]"
     );
     std::process::exit(if error.is_empty() { 0 } else { 2 });
 }

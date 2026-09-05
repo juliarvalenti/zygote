@@ -15,6 +15,8 @@ pub struct RenderSettings {
     pub port: u16,
     /// Resolution of every node's render target.
     pub resolution: UVec2,
+    /// Ignore transport messages and always run on the wall clock.
+    pub free_run: bool,
 }
 
 impl Default for RenderSettings {
@@ -23,6 +25,7 @@ impl Default for RenderSettings {
             graph: Graph::first_pass(),
             port: DEFAULT_PORT,
             resolution: UVec2::new(1280, 720),
+            free_run: false,
         }
     }
 }
@@ -88,6 +91,10 @@ impl Plugin for ZygotePlugin {
                 port: self.settings.port,
             })
             .init_resource::<AudioBandsRes>()
+            .insert_resource(params::FrameClock {
+                free_run: self.settings.free_run,
+                ..Default::default()
+            })
             .init_resource::<params::ParamState>()
             .init_resource::<Fallbacks>()
             .init_resource::<nodes::NodeShaders>();
@@ -109,7 +116,12 @@ impl Plugin for ZygotePlugin {
         )
         .add_systems(Startup, scene::spawn_display)
         .add_systems(Update, net::poll.in_set(ZygoteSet::Network))
-        .add_systems(Update, params::resolve.in_set(ZygoteSet::Resolve))
+        .add_systems(
+            Update,
+            (params::tick_clock, params::resolve)
+                .chain()
+                .in_set(ZygoteSet::Resolve),
+        )
         .add_systems(
             Update,
             (
