@@ -307,6 +307,7 @@ impl ZygoteApp {
     pub fn run(mut self) {
         let asset_root = resolve_asset_root(self.asset_root.clone());
         let assets = asset_root.join("assets");
+        self.settings.assets_dir = Some(assets.clone());
 
         for dir in std::mem::take(&mut self.node_dirs) {
             let full = if dir.is_absolute() {

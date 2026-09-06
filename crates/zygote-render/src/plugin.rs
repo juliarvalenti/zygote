@@ -18,6 +18,9 @@ pub struct RenderSettings {
     pub resolution: UVec2,
     /// Ignore transport messages and always run on the wall clock.
     pub free_run: bool,
+    /// Directory image paths are relative to (`<asset root>/assets`). Sent
+    /// to UIs so they can preview image sources; `None` sends no previews.
+    pub assets_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for RenderSettings {
@@ -27,6 +30,7 @@ impl Default for RenderSettings {
             port: DEFAULT_PORT,
             resolution: UVec2::new(1280, 720),
             free_run: false,
+            assets_dir: None,
         }
     }
 }
@@ -95,6 +99,7 @@ impl Plugin for ZygotePlugin {
             .insert_resource(NodeResolution(self.settings.resolution))
             .insert_resource(net::NetConfig {
                 port: self.settings.port,
+                assets_dir: self.settings.assets_dir.clone(),
             })
             .init_resource::<AudioBandsRes>()
             .insert_resource(params::FrameClock {

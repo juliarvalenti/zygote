@@ -38,10 +38,14 @@ cargo run --release -p zygote-timeline    # the UI; connects to udp://127.0.0.1:
 cargo run --release -p zygote -- --showcase   # stock renderer, builtin nodes only
 ```
 
-The UI asks the renderer for its graph structure and parameter list, lists
-the nodes in a left rail (click one to filter), and builds one control per
-parameter: sliders for floats and ints, per-component sliders for vec2 and
-color, a switch for bools, a button row for choices.
+The UI asks the renderer for its graph structure and parameter list, draws
+the graph (click a node to focus its parameters, click empty canvas to show
+all), and builds one control per parameter: sliders for floats and ints,
+per-component sliders for vec2 and color, a switch for bools, a button row
+for choices. Image sources show their file as a thumbnail in the graph and a
+preview in the parameter list; the renderer only sends the file's path, the
+UI reads it from disk. Hover any button for what it does and its key; the
+`ⓘ` button in the header lists every key and gesture.
 
 **Transport owns time.** While the UI is connected the renderer's clock
 follows the playhead: pause freezes the picture, stop returns to zero,

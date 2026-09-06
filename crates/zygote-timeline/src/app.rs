@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme, Disableable, Root, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Disableable, IconName, Root, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use zygote_core::{
@@ -84,52 +84,54 @@ fn usage(error: &str) -> ! {
 
 pub fn run() {
     let options = parse_args();
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        cx.bind_keys([
-            KeyBinding::new("space", TogglePlay, None),
-            KeyBinding::new("escape", Stop, None),
-            KeyBinding::new("home", GoToStart, None),
-            KeyBinding::new("[", PrevCue, None),
-            KeyBinding::new("]", NextCue, None),
-            KeyBinding::new("enter", AddCue, None),
-            KeyBinding::new("l", ToggleLoop, None),
-            KeyBinding::new("e", ToggleLive, None),
-            KeyBinding::new("t", TileOutput, None),
-            KeyBinding::new("shift-t", PopOut, None),
-        ]);
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            cx.bind_keys([
+                KeyBinding::new("space", TogglePlay, None),
+                KeyBinding::new("escape", Stop, None),
+                KeyBinding::new("home", GoToStart, None),
+                KeyBinding::new("[", PrevCue, None),
+                KeyBinding::new("]", NextCue, None),
+                KeyBinding::new("enter", AddCue, None),
+                KeyBinding::new("l", ToggleLoop, None),
+                KeyBinding::new("e", ToggleLive, None),
+                KeyBinding::new("t", TileOutput, None),
+                KeyBinding::new("shift-t", PopOut, None),
+            ]);
 
-        // Take the left part of the primary display so the output window can
-        // be tiled to the right of us.
-        let bounds = match cx.primary_display().map(|d| d.bounds()) {
-            Some(display) => {
-                let width = (display.size.width * 0.46).max(px(900.));
-                Bounds {
-                    origin: display.origin + point(px(12.), px(40.)),
-                    size: size(width, display.size.height - px(80.)),
+            // Take the left part of the primary display so the output window can
+            // be tiled to the right of us.
+            let bounds = match cx.primary_display().map(|d| d.bounds()) {
+                Some(display) => {
+                    let width = (display.size.width * 0.46).max(px(900.));
+                    Bounds {
+                        origin: display.origin + point(px(12.), px(40.)),
+                        size: size(width, display.size.height - px(80.)),
+                    }
                 }
-            }
-            None => Bounds::centered(None, size(px(1040.), px(760.)), cx),
-        };
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Zygote Timeline".into()),
+                None => Bounds::centered(None, size(px(1040.), px(760.)), cx),
+            };
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Zygote Timeline".into()),
+                        ..Default::default()
+                    }),
+                    focus: true,
                     ..Default::default()
-                }),
-                focus: true,
-                ..Default::default()
-            },
-            |window, cx| {
-                let view = cx.new(|cx| TimelineApp::new(options, window, cx));
-                cx.new(|cx| Root::new(view, window, cx))
-            },
-        )
-        .expect("failed to open window");
-        cx.on_window_closed(|cx, _| cx.quit()).detach();
-        cx.activate(true);
-    });
+                },
+                |window, cx| {
+                    let view = cx.new(|cx| TimelineApp::new(options, window, cx));
+                    cx.new(|cx| Root::new(view, window, cx))
+                },
+            )
+            .expect("failed to open window");
+            cx.on_window_closed(|cx, _| cx.quit()).detach();
+            cx.activate(true);
+        });
 }
 
 /// One control bound to a parameter. Floats and ints get a slider, vec2 and
@@ -167,7 +169,10 @@ pub struct TimelineApp {
     file: PathBuf,
     focus_handle: FocusHandle,
     graph: Option<GraphStructure>,
-    show_graph: bool,
+    show_help: bool,
+    /// Set by a node card's click so the canvas click underneath does not
+    /// clear the selection it just made.
+    graph_node_clicked: bool,
     graph_pan: Point<f32>,
     graph_drag: Option<(Point<Pixels>, Point<f32>)>,
     graph_viewport: Rc<Cell<Bounds<Pixels>>>,
@@ -244,7 +249,8 @@ impl TimelineApp {
             file: options.file,
             focus_handle,
             graph: None,
-            show_graph: false,
+            show_help: false,
+            graph_node_clicked: false,
             graph_pan: Point::default(),
             graph_drag: None,
             graph_viewport: Rc::new(Cell::new(Bounds::default())),
@@ -1290,125 +1296,28 @@ impl TimelineApp {
 
     // ---- rendering ---------------------------------------------------------
 
+    /// Left rail: the modulation rack. Node filtering lives in the graph.
     fn render_rail(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let mut rail = v_flex()
+        v_flex()
+            .id("rail")
             .w(px(RAIL_WIDTH))
             .flex_shrink_0()
             .h_full()
-            .gap_1()
+            .min_h_0()
+            .overflow_y_scroll()
             .pr_3()
             .border_r_1()
-            .border_color(theme.border);
-        rail = rail.child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .pb_1()
-                .child("NODES"),
-        );
-        let all_selected = self.selected_node.is_none();
-        rail = rail.child(
-            div()
-                .id("node-all")
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .text_sm()
-                .cursor_pointer()
-                .when(all_selected, |d| d.bg(theme.primary.opacity(0.12)))
-                .text_color(if all_selected {
-                    theme.primary
-                } else {
-                    theme.foreground
-                })
-                .child("All parameters")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.selected_node = None;
-                    cx.notify();
-                })),
-        );
-        if let Some(graph) = &self.graph {
-            let depths = structure_depths(graph);
-            for (i, node) in graph.nodes.iter().enumerate() {
-                let selected = self.selected_node.as_ref() == Some(&node.id);
-                let is_output = node.id == graph.output;
-                let depth = depths.get(&node.id).copied().unwrap_or(0);
-                let id = node.id.clone();
-                rail = rail.child(
-                    v_flex()
-                        .id(("node", i))
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .when(selected, |d| d.bg(theme.primary.opacity(0.12)))
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .items_center()
-                                .child(div().w(px(depth as f32 * 8.0)))
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .truncate()
-                                        .text_color(if selected {
-                                            theme.primary
-                                        } else {
-                                            theme.foreground
-                                        })
-                                        .child(node.id.to_string()),
-                                )
-                                .when(is_output, |d| {
-                                    d.child(
-                                        div().text_xs().text_color(theme.primary).child("→ out"),
-                                    )
-                                }),
-                        )
-                        .child(
-                            div()
-                                .pl(px(depth as f32 * 8.0))
-                                .text_xs()
-                                .truncate()
-                                .text_color(theme.muted_foreground)
-                                .child(node.kind.clone()),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.selected_node = Some(id.clone());
-                            cx.notify();
-                        })),
-                );
-            }
-        }
-        rail = rail.child(self.render_rack(cx));
-        rail = rail.child(div().flex_1());
-        rail = rail.child(
-            Button::new("toggle-graph")
-                .small()
-                .label(if self.show_graph {
-                    "Hide graph"
-                } else {
-                    "Show graph"
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.show_graph = !this.show_graph;
-                    this.graph_fit_pending = true;
-                    cx.notify();
-                })),
-        );
-        rail.into_any_element()
+            .border_color(theme.border)
+            .child(self.render_rack(cx))
+            .into_any_element()
     }
 
     /// Shared modulation sources with live meters.
     fn render_rack(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let ctx = self.mod_ctx();
-        let mut rack = v_flex()
-            .gap_2()
-            .pt_3()
-            .mt_2()
-            .border_t_1()
-            .border_color(theme.border);
+        let mut rack = v_flex().gap_2();
         rack = rack.child(
             h_flex()
                 .items_center()
@@ -1423,13 +1332,17 @@ impl TimelineApp {
                 .child(
                     Button::new("add-lfo")
                         .xsmall()
-                        .label("+ LFO")
+                        .icon(IconName::Plus)
+                        .label("LFO")
+                        .tooltip("Add a low-frequency oscillator")
                         .on_click(cx.listener(|this, _, _, cx| this.add_source(false, cx))),
                 )
                 .child(
                     Button::new("add-env")
                         .xsmall()
-                        .label("+ ENV")
+                        .icon(IconName::Plus)
+                        .label("ENV")
+                        .tooltip("Add an ADSR envelope, fired by a key")
                         .on_click(cx.listener(|this, _, _, cx| this.add_source(true, cx))),
                 ),
         );
@@ -1473,9 +1386,16 @@ impl TimelineApp {
                             .text_color(theme.muted_foreground)
                             .child(format!("{uses}×")),
                     )
-                    .child(Button::new(("rm-source", i)).xsmall().label("✕").on_click(
-                        cx.listener(move |this, _, _, cx| this.remove_source(&remove_id, cx)),
-                    )),
+                    .child(
+                        Button::new(("rm-source", i))
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::Close)
+                            .tooltip("Remove this source and its assignments")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.remove_source(&remove_id, cx)
+                            })),
+                    ),
             );
             // Live meter.
             card = card.child(
@@ -1573,6 +1493,7 @@ impl TimelineApp {
                                 Button::new(("learn", i))
                                     .xsmall()
                                     .label(if learning { "press a key…" } else { "Learn" })
+                                    .tooltip("Bind a key that fires this envelope")
                                     .when(learning, |b| b.primary())
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.learning = Some(LearnTarget::Trigger(t_learn.clone()));
@@ -1636,7 +1557,7 @@ impl TimelineApp {
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child("no sources yet · add an LFO or an envelope, then assign it from a parameter's `mod` chip"),
+                    .child("No sources yet. Add an LFO or an envelope, then assign it from a parameter's mod chip."),
             );
         }
         rack.into_any_element()
@@ -1665,39 +1586,44 @@ impl TimelineApp {
                 Button::new("play")
                     .small()
                     .primary()
-                    .label(if self.playing {
-                        "Pause  ␣"
+                    .icon(if self.playing {
+                        IconName::Pause
                     } else {
-                        "Play  ␣"
+                        IconName::Play
                     })
+                    .label(if self.playing { "Pause" } else { "Play" })
+                    .tooltip_with_action("Play / pause", &TogglePlay, Some("Zygote"))
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_play(cx))),
             )
             .child(
                 Button::new("stop")
                     .small()
-                    .label("Stop  esc")
+                    .label("Stop")
+                    .tooltip_with_action("Stop and return to the last cue", &Stop, Some("Zygote"))
                     .on_click(cx.listener(|this, _, window, cx| this.stop(window, cx))),
             )
             .child(
                 Button::new("prev-cue")
                     .small()
-                    .label("[ prev")
+                    .icon(IconName::ChevronLeft)
+                    .tooltip_with_action("Previous cue", &PrevCue, Some("Zygote"))
                     .on_click(cx.listener(|this, _, window, cx| this.step_cue(false, window, cx))),
             )
             .child(
                 Button::new("next-cue")
                     .small()
-                    .label("next ]")
+                    .icon(IconName::ChevronRight)
+                    .tooltip_with_action("Next cue", &NextCue, Some("Zygote"))
                     .on_click(cx.listener(|this, _, window, cx| this.step_cue(true, window, cx))),
             )
             .child(
                 Button::new("loop")
                     .small()
-                    .label(if self.timeline.looping {
-                        "Loop: on"
-                    } else {
-                        "Loop: off"
-                    })
+                    .icon(IconName::RotateCw)
+                    .label("Loop")
+                    .toggled(self.timeline.looping)
+                    .when(self.timeline.looping, |b| b.primary())
+                    .tooltip_with_action("Loop the timeline", &ToggleLoop, Some("Zygote"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.timeline.looping = !this.timeline.looping;
                         cx.notify();
@@ -1717,12 +1643,14 @@ impl TimelineApp {
                 Button::new("dur-")
                     .small()
                     .label("−1s")
+                    .tooltip("Shorten the timeline by a second")
                     .on_click(cx.listener(|this, _, _, cx| this.adjust_duration(-1.0, cx))),
             )
             .child(
                 Button::new("dur+")
                     .small()
                     .label("+1s")
+                    .tooltip("Lengthen the timeline by a second")
                     .on_click(cx.listener(|this, _, _, cx| this.adjust_duration(1.0, cx))),
             )
             .child(div().flex_1())
@@ -1740,10 +1668,15 @@ impl TimelineApp {
                 Button::new("mode")
                     .small()
                     .label(if self.force_live {
-                        "Edit cues  e"
+                        "Edit cues"
                     } else {
-                        "Force live  e"
+                        "Force live"
                     })
+                    .tooltip_with_action(
+                        "Edit mode writes slider moves into the parked cue; live mode keeps them as overrides",
+                        &ToggleLive,
+                        Some("Zygote"),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.force_live = !this.force_live;
                         cx.notify();
@@ -1763,13 +1696,16 @@ impl TimelineApp {
                 Button::new("add-cue")
                     .small()
                     .primary()
-                    .label("Add cue here  ⏎")
+                    .icon(IconName::Plus)
+                    .label("Add cue")
+                    .tooltip_with_action("Add a cue at the playhead", &AddCue, Some("Zygote"))
                     .on_click(cx.listener(|this, _, _, cx| this.add_cue(cx))),
             )
             .child(
                 Button::new("bake-cue")
                     .small()
-                    .label("Bake live values into cue")
+                    .label("Bake live")
+                    .tooltip("Write the current live overrides into the selected cue")
                     .disabled(selected.is_none() || self.overrides.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.bake_into_selected(cx))),
             )
@@ -1782,13 +1718,16 @@ impl TimelineApp {
                         None => "Into cue: —",
                     })
                     .disabled(selected.is_none())
+                    .tooltip("How values reach this cue: jump (step) or interpolate from the previous cue (ramp)")
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_transition(cx))),
             )
             .child(
                 Button::new("delete-cue")
                     .small()
                     .danger()
-                    .label("Delete cue")
+                    .icon(IconName::Close)
+                    .label("Delete")
+                    .tooltip("Delete the selected cue")
                     .disabled(selected.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
             )
@@ -1803,12 +1742,13 @@ impl TimelineApp {
                             (Some(LearnTarget::Cue(id)), _) if *id == cue.id => {
                                 "press a key…".to_owned()
                             }
-                            (_, Some(k)) => format!("Cue key: {k}"),
-                            _ => "Learn cue key".to_owned(),
+                            (_, Some(k)) => format!("Key: {k}"),
+                            _ => "Learn key".to_owned(),
                         },
-                        None => "Learn cue key".to_owned(),
+                        None => "Learn key".to_owned(),
                     })
                     .disabled(selected.is_none())
+                    .tooltip("Bind a key that jumps to this cue")
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(id) = this.selected {
                             this.learning = Some(LearnTarget::Cue(id));
@@ -1835,12 +1775,14 @@ impl TimelineApp {
                 Button::new("save")
                     .small()
                     .label("Save")
+                    .tooltip("Save the show file (cues, modulation, keys)")
                     .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
             )
             .child(
                 Button::new("load")
                     .small()
                     .label("Load")
+                    .tooltip("Reload the show file from disk")
                     .on_click(cx.listener(|this, _, window, cx| this.load(window, cx))),
             )
             .into_any_element()
@@ -2163,13 +2105,23 @@ impl TimelineApp {
                 .inset_0(),
             );
 
-        for node in &graph.nodes {
+        for (i, node) in graph.nodes.iter().enumerate() {
             let Some(&(col, row)) = placed.get(&node.id) else {
                 continue;
             };
             let (x, y) = pos(col, row);
             let is_output = node.id == graph.output;
             let is_source = node.inputs.is_empty();
+            let selected = self.selected_node.as_ref() == Some(&node.id);
+            let select_id = node.id.clone();
+            let thumb = node.preview.as_ref().map(|file| {
+                img(PathBuf::from(file))
+                    .w(px(NODE_H - 12.0))
+                    .h(px(NODE_H - 12.0))
+                    .flex_shrink_0()
+                    .rounded_sm()
+                    .object_fit(ObjectFit::Cover)
+            });
             let mut slots = v_flex().justify_around().h_full().pr_1();
             for link in &node.inputs {
                 let connected = link.from.is_some();
@@ -2186,6 +2138,7 @@ impl TimelineApp {
             }
             view = view.child(
                 h_flex()
+                    .id(("graph-node", i))
                     .absolute()
                     .left(px(x))
                     .top(px(y))
@@ -2196,18 +2149,33 @@ impl TimelineApp {
                     .items_center()
                     .rounded_md()
                     .border_1()
-                    .border_color(if is_output {
+                    .cursor_pointer()
+                    .border_color(if selected || is_output {
                         theme.primary
                     } else {
                         theme.border
                     })
-                    .bg(if is_source {
+                    .when(selected, |d| d.border_2())
+                    .bg(if selected {
+                        theme.primary.opacity(0.14)
+                    } else if is_source {
                         theme.muted
                     } else {
                         theme.background
                     })
+                    .hover(|d| d.bg(theme.primary.opacity(0.08)))
                     .when(!node.enabled, |d| d.opacity(0.45))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.selected_node = if this.selected_node.as_ref() == Some(&select_id) {
+                            None
+                        } else {
+                            Some(select_id.clone())
+                        };
+                        this.graph_node_clicked = true;
+                        cx.notify();
+                    }))
                     .when(!node.inputs.is_empty(), |d| d.child(slots))
+                    .when_some(thumb, |d, thumb| d.child(thumb))
                     .child(
                         v_flex()
                             .flex_1()
@@ -2289,23 +2257,47 @@ impl TimelineApp {
                 h_flex()
                     .absolute()
                     .top_1()
-                    .right_1()
+                    .left_1()
                     .gap_1()
-                    .child(
-                        div()
+                    .items_center()
+                    .child(match &self.selected_node {
+                        Some(node) => Button::new("graph-show-all")
+                            .xsmall()
+                            .primary()
+                            .icon(IconName::Close)
+                            .label(format!("{node}"))
+                            .tooltip("Showing this node's parameters. Click to show all.")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.selected_node = None;
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                        None => div()
+                            .px_1p5()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child(format!(
-                                "{} nodes · drag or scroll to pan",
-                                graph.nodes.len()
-                            )),
-                    )
-                    .child(
-                        Button::new("graph-fit").xsmall().label("Fit").on_click(
-                            cx.listener(move |this, _, _, cx| this.graph_fit(content, cx)),
-                        ),
-                    ),
+                            .child("all nodes · click one to focus its parameters")
+                            .into_any_element(),
+                    }),
             )
+            .child(
+                h_flex().absolute().top_1().right_1().gap_1().child(
+                    Button::new("graph-fit")
+                        .xsmall()
+                        .ghost()
+                        .icon(IconName::Maximize)
+                        .tooltip("Fit the graph in view. Drag or scroll to pan.")
+                        .on_click(cx.listener(move |this, _, _, cx| this.graph_fit(content, cx))),
+                ),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                if std::mem::take(&mut this.graph_node_clicked) {
+                    return;
+                }
+                if this.selected_node.take().is_some() {
+                    cx.notify();
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, _, cx| this.graph_mouse_down(ev, cx)),
@@ -2327,6 +2319,99 @@ impl TimelineApp {
             .into_any_element()
     }
 
+    /// Keys and gestures, shown on demand from the header's info button.
+    fn render_help(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (border, key_bg, key_fg, fg, muted) = (
+            theme.border,
+            theme.muted,
+            theme.foreground,
+            theme.foreground,
+            theme.muted_foreground,
+        );
+        let key = move |k: &str| {
+            div()
+                .px_1p5()
+                .py_0p5()
+                .rounded_sm()
+                .bg(key_bg)
+                .text_xs()
+                .font_family("monospace")
+                .text_color(key_fg)
+                .child(k.to_owned())
+        };
+        let row = move |keys: &[&str], what: &str| {
+            let mut chips = h_flex().gap_1().flex_shrink_0().w(px(96.));
+            for k in keys {
+                chips = chips.child(key(k));
+            }
+            h_flex().w_full().gap_2().items_start().child(chips).child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(fg)
+                    .child(what.to_owned()),
+            )
+        };
+        let column = move |title: &str, rows: Vec<AnyElement>| {
+            let mut col = v_flex().gap_1().flex_1().min_w(px(280.)).child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .pb_1()
+                    .child(title.to_owned()),
+            );
+            for r in rows {
+                col = col.child(r);
+            }
+            col
+        };
+        h_flex()
+            .gap_4()
+            .flex_wrap()
+            .items_start()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(border)
+            .child(column(
+                "TRANSPORT",
+                vec![
+                    row(&["space"], "play / pause").into_any_element(),
+                    row(&["esc"], "stop, back to the last cue").into_any_element(),
+                    row(&["home"], "go to start").into_any_element(),
+                    row(&["[", "]"], "previous / next cue").into_any_element(),
+                    row(&["⏎"], "add a cue at the playhead").into_any_element(),
+                    row(&["l"], "toggle loop").into_any_element(),
+                    row(&["e"], "toggle edit / live").into_any_element(),
+                ],
+            ))
+            .child(column(
+                "EDITING",
+                vec![
+                    row(&["double-click"], "reset a parameter to its default").into_any_element(),
+                    row(&["click node"], "focus one node's parameters").into_any_element(),
+                    row(&["drag", "scroll"], "pan the graph").into_any_element(),
+                    row(&["mod"], "assign an LFO or envelope, set depth").into_any_element(),
+                    row(&["Learn"], "bind a key to a cue or envelope").into_any_element(),
+                ],
+            ))
+            .child(column(
+                "OUTPUT WINDOW",
+                vec![
+                    row(&["t", "shift-t"], "tile beside this window / pop out").into_any_element(),
+                    row(&["scroll", "=", "-"], "zoom the view").into_any_element(),
+                    row(&["drag", "arrows"], "pan the view").into_any_element(),
+                    row(&["right-drag"], "orbit the quad").into_any_element(),
+                    row(&["home", "0"], "reset the view").into_any_element(),
+                    row(&["s"], "save a screenshot").into_any_element(),
+                    row(&["esc"], "quit the renderer").into_any_element(),
+                ],
+            ))
+            .into_any_element()
+    }
+
     fn render_params(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let values = self.effective_values();
@@ -2340,6 +2425,64 @@ impl TimelineApp {
                     .text_color(theme.muted_foreground)
                     .child("waiting for the renderer to describe its graph…"),
             );
+        }
+        // Image sources have no parameters, so they would otherwise never
+        // appear here. Show what they feed into the graph.
+        if let Some(graph) = &self.graph {
+            for node in &graph.nodes {
+                let Some(file) = &node.preview else { continue };
+                let focused = match &self.selected_node {
+                    Some(filter) => filter == &node.id,
+                    None => true,
+                };
+                if !focused {
+                    continue;
+                }
+                let large = self.selected_node.is_some();
+                let (w, h) = if large { (320.0, 180.0) } else { (96.0, 54.0) };
+                list = list.child(
+                    v_flex()
+                        .gap_1()
+                        .px_2()
+                        .pt_2()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_baseline()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.foreground)
+                                        .child(node.id.to_string()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(node.kind.clone()),
+                                ),
+                        )
+                        .child(
+                            img(PathBuf::from(file))
+                                .w(px(w))
+                                .h(px(h))
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.muted)
+                                .object_fit(ObjectFit::Contain),
+                        )
+                        .when(large, |d| {
+                            d.child(
+                                div()
+                                    .text_xs()
+                                    .font_family("monospace")
+                                    .text_color(theme.muted_foreground)
+                                    .child(file.clone()),
+                            )
+                        }),
+                );
+            }
         }
         let mut last_node: Option<NodeId> = None;
         for (i, control) in self.params.iter().enumerate() {
@@ -2661,46 +2804,90 @@ impl Render for TimelineApp {
         };
         let header = h_flex()
             .items_center()
-            .gap_3()
+            .gap_2()
             .child(div().text_lg().child("Zygote"))
-            .child(div().flex_1().min_w_0().text_xs().truncate().text_color(muted).child(
-                "space play · esc stop · [ ] cues · ⏎ add cue · e live/edit · l loop · t tile · double-click resets",
-            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .truncate()
+                    .text_color(muted)
+                    .child(
+                        self.graph
+                            .as_ref()
+                            .map(|g| g.name.clone())
+                            .unwrap_or_default(),
+                    ),
+            )
             .child(
                 Button::new("tile")
                     .small()
-                    .label(if self.tiled { "Re-tile output" } else { "Tile output →" })
+                    .icon(IconName::PanelRight)
+                    .label(if self.tiled { "Re-tile" } else { "Tile output" })
                     .disabled(self.sender.is_none())
+                    .tooltip_with_action(
+                        "Place the output window beside this one",
+                        &TileOutput,
+                        Some("Zygote"),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| this.tile(window, cx))),
             )
             .child(
                 Button::new("release-output")
                     .small()
+                    .icon(IconName::ExternalLink)
                     .label("Pop out")
                     .disabled(!self.tiled)
+                    .tooltip_with_action(
+                        "Let the output window float free (drag it to the projector)",
+                        &PopOut,
+                        Some("Zygote"),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| this.release_output(cx))),
             )
             .child(
                 Button::new("release-all")
                     .small()
+                    .icon(IconName::Undo2)
                     .label("Release live")
                     .disabled(self.overrides.is_empty())
+                    .tooltip("Drop every live override; parameters fall back to their cues")
                     .on_click(cx.listener(|this, _, window, cx| this.release_all(window, cx))),
+            )
+            .child(
+                Button::new("help")
+                    .small()
+                    .ghost()
+                    .icon(IconName::Info)
+                    .toggled(self.show_help)
+                    .when(self.show_help, |b| b.primary())
+                    .tooltip("Keys and gestures")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_help = !this.show_help;
+                        cx.notify();
+                    })),
             );
-        let rail = self.render_rail(cx);
-        let transport = self.render_transport(cx);
-        let graph = if self.show_graph {
-            Some(self.render_graph(cx))
+        let help = if self.show_help {
+            Some(self.render_help(cx))
         } else {
             None
         };
+        let rail = self.render_rail(cx);
+        let transport = self.render_transport(cx);
+        let graph = self.render_graph(cx);
         let axis = self.render_axis(cx);
         let cue_bar = self.render_cue_bar(cx);
         let params = self.render_params(cx);
 
-        let mut main = v_flex().flex_1().min_w_0().gap_3().child(transport);
-        if let Some(graph) = graph {
-            main = main.child(graph);
+        let mut main = v_flex()
+            .flex_1()
+            .min_w_0()
+            .gap_3()
+            .child(transport)
+            .child(graph);
+        if let Some(help) = help {
+            main = main.child(help);
         }
         main = main.child(axis).child(cue_bar).child(
             div()

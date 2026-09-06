@@ -7,9 +7,11 @@ use zygote_core::{Message, PROTOCOL_VERSION, ParamPath, ParamReceiver, ParamValu
 use crate::params::{ParamState, Transport};
 use crate::plugin::{GraphRes, LibraryRes};
 
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Resource, Clone, Debug)]
 pub struct NetConfig {
     pub port: u16,
+    /// Where image sources live, so their preview paths can be sent to UIs.
+    pub assets_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Resource)]
@@ -35,6 +37,7 @@ pub fn bind(mut commands: Commands, config: Res<NetConfig>) {
 
 pub fn poll(
     net: Option<ResMut<Net>>,
+    config: Res<NetConfig>,
     graph: Res<GraphRes>,
     library: Res<LibraryRes>,
     mut state: ResMut<ParamState>,
@@ -51,7 +54,9 @@ pub fn poll(
                 } else {
                     info!("client `{client}` connected from {from}");
                 }
-                let structure = Message::structure(graph.structure(&library));
+                let structure = Message::structure(
+                    graph.structure_with_assets(&library, config.assets_dir.as_deref()),
+                );
                 if let Err(e) = net.0.send_to(&structure, from) {
                     warn!("failed to send graph structure to {from}: {e}");
                 }

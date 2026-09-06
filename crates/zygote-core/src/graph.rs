@@ -323,6 +323,12 @@ pub struct NodeSummary {
     pub inputs: Vec<InputLink>,
     pub feedback: bool,
     pub enabled: bool,
+    /// Absolute path of a file on this machine that previews the node's
+    /// output (an image source's file). The UI may show it; nothing about
+    /// how the node renders travels with it. Set only by a renderer that
+    /// knows where its assets live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -522,6 +528,16 @@ impl Graph {
 
     /// UI-facing structure.
     pub fn structure(&self, library: &NodeLibrary) -> GraphStructure {
+        self.structure_with_assets(library, None)
+    }
+
+    /// [`Graph::structure`] with image sources resolved against an assets
+    /// directory so the UI can preview them.
+    pub fn structure_with_assets(
+        &self,
+        library: &NodeLibrary,
+        assets: Option<&std::path::Path>,
+    ) -> GraphStructure {
         let nodes = self
             .nodes
             .iter()
@@ -549,6 +565,14 @@ impl Graph {
                         })
                         .collect(),
                 };
+                let preview = match (&node.kind, assets) {
+                    (NodeKind::Image { path }, Some(assets)) => {
+                        let file = assets.join(path);
+                        let file = std::fs::canonicalize(&file).unwrap_or(file);
+                        Some(file.to_string_lossy().into_owned())
+                    }
+                    _ => None,
+                };
                 NodeSummary {
                     id: node.id.clone(),
                     kind: node.kind.label(),
@@ -556,6 +580,7 @@ impl Graph {
                     inputs,
                     feedback: def.is_some_and(|d| d.feedback),
                     enabled: node.enabled,
+                    preview,
                 }
             })
             .collect();
@@ -811,6 +836,35 @@ mod tests {
             graph.param_value(&lib(), &path).unwrap(),
             ParamValue::Float(1.0)
         );
+    }
+
+    #[test]
+    fn structure_previews_image_sources_only_with_assets() {
+        let graph = Graph::showcase();
+        let plain = graph.structure(&lib());
+        assert!(plain.nodes.iter().all(|n| n.preview.is_none()));
+        let dir = std::path::Path::new("/nonexistent/assets");
+        let s = graph.structure_with_assets(&lib(), Some(dir));
+        let image = s
+            .nodes
+            .iter()
+            .find(|n| n.kind.starts_with("image"))
+            .expect("showcase has an image source");
+        assert_eq!(
+            image.preview.as_deref(),
+            Some("/nonexistent/assets/images/sample.png")
+        );
+        assert!(
+            s.nodes
+                .iter()
+                .filter(|n| !n.kind.starts_with("image"))
+                .all(|n| n.preview.is_none())
+        );
+        // The field is optional on the wire: old structures still parse.
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(!json.contains("preview"));
+        let back: GraphStructure = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, plain);
     }
 
     #[test]
