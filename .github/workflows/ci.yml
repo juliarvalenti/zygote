@@ -29,7 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
-            libasound2-dev libudev-dev libzstd-dev pkg-config
+            libasound2-dev libudev-dev libzstd-dev libfontconfig1-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.98"
@@ -48,7 +48,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
-            libasound2-dev libudev-dev libzstd-dev pkg-config \
+            libasound2-dev libudev-dev libzstd-dev libfontconfig1-dev pkg-config \
             xvfb mesa-vulkan-drivers imagemagick
       - uses: dtolnay/rust-toolchain@stable
         with:
