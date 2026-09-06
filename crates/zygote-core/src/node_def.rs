@@ -594,6 +594,20 @@ pub const BUILTIN_NODES: &[(&str, &str)] = &[
     ("blend", include_str!("../nodes/blend.wgsl")),
     ("feedback", include_str!("../nodes/feedback.wgsl")),
     ("color_grade", include_str!("../nodes/color_grade.wgsl")),
+    ("voronoi", include_str!("../nodes/voronoi.wgsl")),
+    ("checker", include_str!("../nodes/checker.wgsl")),
+    (
+        "radial_gradient",
+        include_str!("../nodes/radial_gradient.wgsl"),
+    ),
+    ("mirror_tile", include_str!("../nodes/mirror_tile.wgsl")),
+    ("pixelate", include_str!("../nodes/pixelate.wgsl")),
+    ("luma_mask", include_str!("../nodes/luma_mask.wgsl")),
+    ("edge_detect", include_str!("../nodes/edge_detect.wgsl")),
+    ("blur", include_str!("../nodes/blur.wgsl")),
+    ("streak", include_str!("../nodes/streak.wgsl")),
+    ("dither", include_str!("../nodes/dither.wgsl")),
+    ("vignette", include_str!("../nodes/vignette.wgsl")),
 ];
 
 impl NodeLibrary {
@@ -828,12 +842,23 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             names,
             vec![
                 "blend",
+                "blur",
+                "checker",
                 "color_grade",
+                "dither",
+                "edge_detect",
                 "feedback",
+                "luma_mask",
+                "mirror_tile",
                 "noise",
+                "pixelate",
+                "radial_gradient",
                 "solid",
+                "streak",
                 "test_pattern",
-                "warp"
+                "vignette",
+                "voronoi",
+                "warp",
             ]
         );
         let warp = lib.get("warp").unwrap();

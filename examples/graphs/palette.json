@@ -1,0 +1,18 @@
+{
+  "name": "palette",
+  "nodes": [
+    { "id": "cells",  "type": "voronoi", "params": { "scale": 5, "mode": "edges", "width": 0.06, "speed": 0.4 } },
+    { "id": "board",  "type": "checker", "params": { "cells": 6, "rotate": 0.05, "moire": 0.02, "speed": 0.2 } },
+    { "id": "spot",   "type": "radial_gradient", "params": { "radius": 0.25, "softness": 0.35 } },
+    { "id": "key",    "type": "luma_mask", "inputs": ["board", "cells", "spot"], "params": { "softness": 0.6 } },
+    { "id": "tile",   "type": "mirror_tile", "inputs": ["key"], "params": { "tiles_x": 2, "tiles_y": 2 } },
+    { "id": "blocks", "type": "pixelate", "inputs": ["tile"], "params": { "cells": 160 } },
+    { "id": "ink",    "type": "edge_detect", "inputs": ["blocks"], "params": { "mode": "overlay", "gain": 1.0 } },
+    { "id": "smear",  "type": "streak", "inputs": ["ink"], "params": { "angle": 0.125, "distance": 0.003, "decay": 0.88 } },
+    { "id": "soft",   "type": "blur", "inputs": ["smear"], "params": { "radius": 0.03, "threshold": 0.6, "gain": 1.0 } },
+    { "id": "glow",   "type": "blend", "inputs": ["smear", "soft"], "params": { "mode": "add", "mix": 0.5 } },
+    { "id": "retro",  "type": "dither", "inputs": ["glow"], "params": { "levels": 6, "pattern": "bayer8", "cells": 320, "strength": 0.35 } },
+    { "id": "edges",  "type": "vignette", "inputs": ["retro"], "params": { "amount": 0.7, "radius": 0.5 } }
+  ],
+  "output": "edges"
+}

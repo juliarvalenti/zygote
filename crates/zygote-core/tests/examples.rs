@@ -15,6 +15,10 @@ const GRAPHS: &[(&str, &str)] = &[
         "generators",
         include_str!("../../../examples/graphs/generators.json"),
     ),
+    (
+        "palette",
+        include_str!("../../../examples/graphs/palette.json"),
+    ),
 ];
 
 #[test]

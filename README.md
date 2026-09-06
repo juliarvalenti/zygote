@@ -166,10 +166,22 @@ gives every node `params.<name>`, `<input>(uv)`, `has_<input>()`,
 Param and input names must not collide with imported WGSL items; the header
 parser rejects that.
 
-Builtin nodes (`crates/zygote-core/nodes/`): `solid`, `test_pattern`,
-`noise`, `warp`, `blend`, `feedback`, `color_grade`. Structural kinds the
-renderer implements itself: `image` (PNG/JPEG asset) and `camera`
-(placeholder; no capture backend yet).
+Builtin nodes (`crates/zygote-core/nodes/`), by role:
+
+| Role | Nodes |
+| --- | --- |
+| generators | `solid`, `test_pattern`, `noise` (fBm), `voronoi` (cells / edges / distance / bubbles), `checker` (scroll, rotate, moiré), `radial_gradient` (circle / square / diamond) |
+| geometry | `warp` (procedural or a `displacement` input), `mirror_tile`, `pixelate` |
+| compositing | `blend` (multiply / screen / add / alpha), `luma_mask` (b over a through a mask input or b's own brightness) |
+| time | `feedback` (zoom / rotate / hue spiral trails), `streak` (directional trails) |
+| analysis and finishing | `edge_detect`, `blur` (one axis or both; threshold for bloom), `dither`, `vignette`, `color_grade` |
+
+Bloom is a graph, not a node: `blur` with a threshold, then `blend` in
+`add` mode over the source. `examples/graphs/palette.json` chains most of
+the set. Structural kinds the renderer implements itself: `image`
+(PNG/JPEG asset) and `camera` (placeholder; no capture backend yet).
+
+![](docs/nodes.png)
 
 If an effect cannot be expressed as one pass with these declarations, the
 answer is to grow this vocabulary in Zygote (a compute pass, an intermediate
