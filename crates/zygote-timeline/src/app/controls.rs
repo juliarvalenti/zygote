@@ -45,6 +45,7 @@ impl TimelineApp {
                         (0.0, 1.0, 0.001, c[0]),
                         (0.0, 1.0, 0.001, c[1]),
                         (0.0, 1.0, 0.001, c[2]),
+                        (0.0, 1.0, 0.001, c[3]),
                     ]
                 }
                 _ => Vec::new(),
@@ -224,7 +225,7 @@ impl TimelineApp {
                 ParamValue::Float(v) => vec![*v],
                 ParamValue::Int(v) => vec![*v as f32],
                 ParamValue::Vec2(v) => v.to_vec(),
-                ParamValue::Color(c) => c[..3].to_vec(),
+                ParamValue::Color(c) => c.to_vec(),
                 _ => Vec::new(),
             };
             for (slider, component) in control.sliders.iter().zip(components) {

@@ -9,11 +9,12 @@
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let c = source(in.uv).rgb;
+    let src = source(in.uv);
+    let c = src.rgb;
     let d = abs(in.uv - 0.5) * vec2<f32>(frame.aspect, 1.0) * 2.0;
     let circular = length(d) * 0.5;
     let boxy = max(d.x / frame.aspect, d.y) * 0.5;
     let dist = mix(boxy, circular, params.roundness);
     let t = smoothstep(params.radius, params.radius + params.softness, dist) * params.amount;
-    return vec4<f32>(mix(c, params.tint.rgb, t), 1.0);
+    return vec4<f32>(mix(c, params.tint.rgb, t), src.a);
 }

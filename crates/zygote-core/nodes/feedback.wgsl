@@ -21,12 +21,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let centred = (in.uv - 0.5) * vec2<f32>(aspect, 1.0);
     let prev_uv = rotate2(centred / zoom, -params.rotate * steps) / vec2<f32>(aspect, 1.0) + 0.5;
 
-    var prev = previous(prev_uv).rgb;
+    let prev4 = previous(prev_uv);
+    var prev = prev4.rgb;
     prev = clamp(hue_rotate(prev, params.hue_shift * steps) * decay, vec3<f32>(0.0), vec3<f32>(1.0));
 
-    let src = source(in.uv).rgb;
+    let src4 = source(in.uv);
+    let src = src4.rgb;
     // Lighten composite: trails persist where brighter than the source, and a
     // static source settles back to itself instead of blowing out.
     let out = mix(src, max(src, prev), params.mix);
-    return vec4<f32>(out, 1.0);
+    let alpha = mix(src4.a, max(src4.a, prev4.a * decay), params.mix);
+    return vec4<f32>(out, alpha);
 }

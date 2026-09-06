@@ -16,5 +16,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         case 2u: { blended = a.rgb + b.rgb; }
         default: { blended = mix(a.rgb, b.rgb, b.a); }
     }
-    return vec4<f32>(mix(a.rgb, blended, params.mix), 1.0);
+    // Alpha composites as "over": either input being opaque makes the result opaque.
+    return vec4<f32>(mix(a.rgb, blended, params.mix), a.a + b.a * (1.0 - a.a));
 }

@@ -29,5 +29,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if params.invert != 0u {
         m = 1.0 - m;
     }
-    return vec4<f32>(mix(a.rgb, b.rgb, m), 1.0);
+    return mix(a, b, m);
 }

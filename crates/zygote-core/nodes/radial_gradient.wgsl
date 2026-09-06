@@ -17,5 +17,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         default: { dist = length(d); }
     }
     let t = smoothstep(params.radius, params.radius + params.softness, dist);
-    return vec4<f32>(mix(params.inner.rgb, params.outer.rgb, t), 1.0);
+    return mix(params.inner, params.outer, t);
 }

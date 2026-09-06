@@ -8,9 +8,11 @@
 
 const TAPS: i32 = 4; // taps run -TAPS..=TAPS per axis
 
-fn bright(uv: vec2<f32>) -> vec3<f32> {
-    let c = source(uv).rgb;
-    return max(c - vec3<f32>(params.threshold), vec3<f32>(0.0)) / max(1.0 - params.threshold, 1e-3);
+// Colour above the threshold; alpha is blurred as-is.
+fn bright(uv: vec2<f32>) -> vec4<f32> {
+    let c = source(uv);
+    let rgb = max(c.rgb - vec3<f32>(params.threshold), vec3<f32>(0.0)) / max(1.0 - params.threshold, 1e-3);
+    return vec4<f32>(rgb, c.a);
 }
 
 fn weight(i: f32, sigma: f32) -> f32 {
@@ -25,7 +27,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let sigma = f32(TAPS) * 0.5;
     let dx = vec2<f32>(step_uv / frame.aspect, 0.0);
     let dy = vec2<f32>(0.0, step_uv);
-    var acc = vec3<f32>(0.0);
+    var acc = vec4<f32>(0.0);
     var total = 0.0;
     switch params.direction {
         case 0u: {
@@ -52,5 +54,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             }
         }
     }
-    return vec4<f32>(clamp(acc / total * params.gain, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    let c = acc / total;
+    return vec4<f32>(clamp(c.rgb * params.gain, vec3<f32>(0.0), vec3<f32>(1.0)), c.a);
 }

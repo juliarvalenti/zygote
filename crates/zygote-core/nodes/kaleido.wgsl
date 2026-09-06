@@ -1,5 +1,11 @@
-// Body of the `kaleido` node. Parameters come from the Rust struct in main.rs:
-// params.segments, params.spin, params.centre, params.tint, params.mirror.
+//! node: kaleido
+//! doc: Kaleidoscope: mirrors the source into wedges around a centre
+//! input source
+//! param segments: float = 6 in 1..24 "Number of mirror wedges"
+//! param spin: float = 0 in -1..1 "Rotation of the wedge pattern (turns)"
+//! param centre: vec2 = 0.5, 0.5 in 0..1 "Centre of the mirror (UV)"
+//! param tint: color = #ffffff "Multiply the result by this colour"
+//! param mirror: bool = true "Fold every other wedge so edges meet seamlessly"
 #import zygote::common::{TAU, rotate2}
 
 @fragment
@@ -20,5 +26,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let q = vec2<f32>(cos(a), sin(a)) * radius;
     let uv = q / vec2<f32>(aspect, 1.0) + params.centre;
-    return source(uv) * vec4<f32>(params.tint.rgb, 1.0);
+    return source(uv) * params.tint;
 }

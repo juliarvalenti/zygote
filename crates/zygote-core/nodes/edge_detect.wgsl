@@ -23,12 +23,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let gy = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
     var e = length(vec2<f32>(gx, gy)) * params.gain;
     e = clamp((e - params.threshold) / max(1.0 - params.threshold, 1e-3), 0.0, 1.0);
-    let src = source(uv).rgb;
+    let s = source(uv);
+    let src = s.rgb;
     var out: vec3<f32>;
     switch params.mode {
         case 1u: { out = src + vec3<f32>(e); }
         case 2u: { out = src * e / max(luma(src), 1e-3); }
         default: { out = vec3<f32>(e); }
     }
-    return vec4<f32>(clamp(out, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    return vec4<f32>(clamp(out, vec3<f32>(0.0), vec3<f32>(1.0)), s.a);
 }

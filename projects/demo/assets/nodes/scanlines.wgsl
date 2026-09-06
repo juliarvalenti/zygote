@@ -8,9 +8,10 @@
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let c = source(in.uv).rgb;
+    let src = source(in.uv);
+    let c = src.rgb;
     let line = 0.5 + 0.5 * sin(in.uv.y * params.density * 3.14159);
     let dark = 1.0 - params.strength * (1.0 - line);
     let band = 0.85 + 0.15 * smoothstep(0.0, 1.0, sin((in.uv.y + frame.time * params.roll) * 6.2831));
-    return vec4<f32>(c * dark * band * params.tint.rgb, 1.0);
+    return vec4<f32>(c * dark * band * params.tint.rgb, src.a);
 }

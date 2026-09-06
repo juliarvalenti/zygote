@@ -38,5 +38,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let steps = f32(params.levels - 1);
     let q = floor(c * steps + t) / steps;
-    return vec4<f32>(mix(source(in.uv).rgb, q, params.strength), 1.0);
+    let src = source(in.uv);
+    return vec4<f32>(mix(src.rgb, q, params.strength), src.a);
 }

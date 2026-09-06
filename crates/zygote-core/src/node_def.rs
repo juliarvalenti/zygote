@@ -594,6 +594,7 @@ pub const BUILTIN_NODES: &[(&str, &str)] = &[
     ("blend", include_str!("../nodes/blend.wgsl")),
     ("feedback", include_str!("../nodes/feedback.wgsl")),
     ("color_grade", include_str!("../nodes/color_grade.wgsl")),
+    ("kaleido", include_str!("../nodes/kaleido.wgsl")),
     ("voronoi", include_str!("../nodes/voronoi.wgsl")),
     ("checker", include_str!("../nodes/checker.wgsl")),
     (
@@ -848,6 +849,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
                 "dither",
                 "edge_detect",
                 "feedback",
+                "kaleido",
                 "luma_mask",
                 "mirror_tile",
                 "noise",

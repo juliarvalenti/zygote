@@ -165,7 +165,7 @@ impl TimelineApp {
                         r: c[0],
                         g: c[1],
                         b: c[2],
-                        a: 1.0,
+                        a: c[3],
                     };
                     let mut row = h_flex().gap_2().items_center().flex_1();
                     row = row.child(
@@ -177,7 +177,7 @@ impl TimelineApp {
                             .border_color(theme.border)
                             .bg(swatch),
                     );
-                    for (slider, name) in control.sliders.iter().zip(["r", "g", "b"]) {
+                    for (slider, name) in control.sliders.iter().zip(["r", "g", "b", "a"]) {
                         row = row
                             .child(
                                 div()

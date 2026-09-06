@@ -12,7 +12,8 @@
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    var c = source(in.uv).rgb;
+    let src = source(in.uv);
+    var c = src.rgb;
     c = hue_rotate(c, params.hue);
     let l = luma(c);
     c = mix(vec3<f32>(l), c, params.saturation);
@@ -25,5 +26,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if has_lut() {
         c = mix(c, lut(vec2<f32>(l2, 0.5)).rgb, params.lut_mix);
     }
-    return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
 }

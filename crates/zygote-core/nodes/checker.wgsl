@@ -25,5 +25,5 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let q = rotate2(centred, (params.rotate + params.moire) * TAU) * params.cells + scroll;
         v = abs(v - board(q));
     }
-    return vec4<f32>(mix(params.color_a.rgb, params.color_b.rgb, v), 1.0);
+    return mix(params.color_a, params.color_b, v);
 }

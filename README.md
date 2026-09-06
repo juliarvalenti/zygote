@@ -19,7 +19,7 @@ own nodes in Rust or WGSL.
 | `crates/zygote-macros` | `#[derive(NodeParams)]`: a Rust struct is a node's whole parameter declaration. |
 | `crates/zygote-render` | The engine as a library (nannou 0.20 / Bevy 0.19) plus the stock `zygote` binary. One generic shader-node material; node code never touches Bevy. |
 | `crates/zygote-timeline` | gpui-kit window: graph view, transport, cue axis, typed controls per parameter. Knows nothing about shaders. One state store (`app/mod.rs`), logic modules beside it, one file per component under `app/views/`. |
-| `projects/demo` | A project consuming the engine: one Rust-declared node, one WGSL-file node, its own graph and assets. |
+| `projects/demo` | A project consuming the engine: one Rust-declared node (`rgb_shift`), one WGSL-file node (`scanlines`), its own graph and assets. |
 | `projects/haze` | Proof-of-concept show: monochrome pulsing geometry and noise haze from a central point, three WGSL nodes. |
 | `projects/mycelium` | A CPU simulation source (tip-growth network traced by nutrient agents) with LFOs and an envelope on its parameters. |
 | `projects/scope` | An analog XY oscilloscope: the beam traces Lissajous knots onto slow phosphor (feedback), a show file steps through harmonic ratios with ramps and turns the figure with an LFO. Three WGSL nodes. |
@@ -39,7 +39,7 @@ cargo run --release -p zygote-haze        # monochrome proof of concept
 cargo run --release -p zygote-mycelium    # CPU simulation source with LFOs
 cargo run --release -p zygote-timeline -- projects/mycelium/mycelium.show.json
 cargo run --release -p zygote-scope       # XY oscilloscope; pair with projects/scope/scope.show.json
-cargo run --release -p zygote-demo        # a project: image → warp → kaleido → feedback → scanlines
+cargo run --release -p zygote-demo        # a project: image → warp → kaleido → feedback → rgb_shift → scanlines
 cargo run --release -p zygote-timeline    # the UI; connects to udp://127.0.0.1:9471
 cargo run --release -p zygote -- --showcase   # stock renderer, builtin nodes only
 ```
@@ -129,27 +129,27 @@ uploads the result, which is how `projects/mycelium` runs its simulation):
 use zygote_render::prelude::*;
 
 #[derive(NodeParams, Clone)]
-struct Kaleido {
-    /// Number of mirror wedges
-    #[param(default = 6.0, min = 1.0, max = 24.0)]
-    segments: f32,
-    #[param(default = "screen", options = ["multiply", "screen", "add", "alpha"])]
+struct RgbShift {
+    /// Offset distance (fraction of frame height)
+    #[param(default = 0.004, min = 0.0, max = 0.05)]
+    amount: f32,
+    #[param(default = "radial", options = ["fixed", "radial"])]
     mode: String,
     #[param(default = "#ffffff")]
     tint: [f32; 4],
 }
 
-impl RustNode for Kaleido {
-    const NAME: &'static str = "kaleido";
+impl RustNode for RgbShift {
+    const NAME: &'static str = "rgb_shift";
     const INPUTS: &'static [Input] = &[Input::required("source")];
-    const SHADER: &'static str = include_str!("kaleido.wgsl");
+    const SHADER: &'static str = include_str!("rgb_shift.wgsl");
     type Params = Self;
 }
 
 fn main() {
     ZygoteApp::new()
         .asset_root(env!("CARGO_MANIFEST_DIR"))
-        .register::<Kaleido>()
+        .register::<RgbShift>()
         .node_dir("nodes")
         .graph_file("graphs/main.json")
         .parse_args()
@@ -171,10 +171,17 @@ Builtin nodes (`crates/zygote-core/nodes/`), by role:
 | Role | Nodes |
 | --- | --- |
 | generators | `solid`, `test_pattern`, `noise` (fBm), `voronoi` (cells / edges / distance / bubbles), `checker` (scroll, rotate, moiré), `radial_gradient` (circle / square / diamond) |
-| geometry | `warp` (procedural or a `displacement` input), `mirror_tile`, `pixelate` |
+| geometry | `warp` (procedural or a `displacement` input), `kaleido`, `mirror_tile`, `pixelate` |
 | compositing | `blend` (multiply / screen / add / alpha), `luma_mask` (b over a through a mask input or b's own brightness) |
 | time | `feedback` (zoom / rotate / hue spiral trails), `streak` (directional trails) |
 | analysis and finishing | `edge_detect`, `blur` (one axis or both; threshold for bloom), `dither`, `vignette`, `color_grade` |
+
+Colours are RGBA. The fourth slider is alpha; generators emit it (`solid`,
+`radial_gradient`, `checker`), filters keep their source's alpha, `blend`
+and `luma_mask` composite it, and `feedback`/`streak` let it decay with the
+trail. The output window ignores alpha (the quad is opaque), so it only
+matters inside the graph: `blend` in `alpha` mode and `luma_mask` on the
+`alpha` channel.
 
 Bloom is a graph, not a node: `blur` with a threshold, then `blend` in
 `add` mode over the source. `examples/graphs/palette.json` chains most of

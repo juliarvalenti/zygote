@@ -18,11 +18,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let to_uv = vec2<f32>(1.0 / frame.aspect, 1.0);
     let back = in.uv - dir * params.distance * steps * to_uv;
     let side = vec2<f32>(-dir.y, dir.x) * params.spread * steps * to_uv;
-    var prev = previous(back).rgb * 0.5;
-    prev += previous(back + side).rgb * 0.25;
-    prev += previous(back - side).rgb * 0.25;
-    prev = clamp(prev * decay, vec3<f32>(0.0), vec3<f32>(1.0));
-    let src = source(in.uv).rgb;
+    var prev = previous(back) * 0.5;
+    prev += previous(back + side) * 0.25;
+    prev += previous(back - side) * 0.25;
+    prev = clamp(prev * decay, vec4<f32>(0.0), vec4<f32>(1.0));
+    let src = source(in.uv);
     let out = mix(src, max(src, prev), params.mix);
-    return vec4<f32>(out, 1.0);
+    return out;
 }
