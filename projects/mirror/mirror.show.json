@@ -1,0 +1,29 @@
+{
+  "cues": [
+    { "id": 1, "time": 0.0,  "label": "plain",     "transition": "cut", "values": { "fold.segments": 1.0, "ripple.amount": 0.0,  "ripple.twist": 0.0, "trails.decay": 0.0,  "trails.zoom": 1.0,   "grade.posterize": 0, "grade.saturation": 1.1, "grade.hue": 0.0 } },
+    { "id": 2, "time": 6.0,  "label": "kaleido",   "transition": "interpolate", "values": { "fold.segments": 6.0, "ripple.amount": 0.02, "ripple.twist": 0.0, "trails.decay": 0.0,  "trails.zoom": 1.0,   "grade.posterize": 0, "grade.saturation": 1.3, "grade.hue": 0.0 } },
+    { "id": 3, "time": 12.0, "label": "funhouse",  "transition": "interpolate", "values": { "fold.segments": 1.0, "ripple.amount": 0.12, "ripple.twist": 1.5, "trails.decay": 0.0,  "trails.zoom": 1.0,   "grade.posterize": 0, "grade.saturation": 1.0, "grade.hue": 0.0 } },
+    { "id": 4, "time": 18.0, "label": "poster",    "transition": "cut", "values": { "fold.segments": 1.0, "ripple.amount": 0.0,  "ripple.twist": 0.0, "trails.decay": 0.0,  "trails.zoom": 1.0,   "grade.posterize": 4, "grade.saturation": 1.6, "grade.hue": 0.08 } },
+    { "id": 5, "time": 24.0, "label": "trails",    "transition": "interpolate", "values": { "fold.segments": 1.0, "ripple.amount": 0.0,  "ripple.twist": 0.0, "trails.decay": 0.9,  "trails.zoom": 1.01,  "grade.posterize": 0, "grade.saturation": 1.1, "grade.hue": 0.0 } },
+    { "id": 6, "time": 30.0, "label": "plain",     "transition": "interpolate", "values": { "fold.segments": 1.0, "ripple.amount": 0.0,  "ripple.twist": 0.0, "trails.decay": 0.0,  "trails.zoom": 1.0,   "grade.posterize": 0, "grade.saturation": 1.1, "grade.hue": 0.0 } }
+  ],
+  "duration": 36.0,
+  "looping": true,
+  "modulation": {
+    "sources": [
+      { "id": "drift",  "kind": "lfo", "rate_hz": 0.05, "phase": 0.0, "shape": "sine" },
+      { "id": "ripple", "kind": "envelope", "adsr": { "attack": 0.02, "decay": 0.6, "sustain": 0.2, "release": 1.0 }, "trigger": "ripple" },
+      { "id": "wipe",   "kind": "envelope", "adsr": { "attack": 0.02, "decay": 0.1, "sustain": 1.0, "release": 0.3 }, "trigger": "wipe" }
+    ],
+    "assignments": [
+      { "target": "fold.spin",      "source": "drift",  "depth": 0.05 },
+      { "target": "ripple.amount",  "source": "ripple", "depth": 0.15 },
+      { "target": "trails.decay",   "source": "wipe",   "depth": -0.9 }
+    ]
+  },
+  "keys": {
+    "q": { "action": "trigger", "trigger": "ripple" },
+    "w": { "action": "trigger", "trigger": "wipe" }
+  },
+  "next_id": 7
+}

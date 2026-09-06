@@ -12,6 +12,7 @@ members = [
     "projects/lattice",
     "projects/orbs",
     "projects/etching",
+    "projects/mirror",
 ]
 
 [workspace.package]

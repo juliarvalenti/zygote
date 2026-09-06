@@ -27,6 +27,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::render::render_resource::{Extent3d, TextureDimension};
 
+use crate::camera::{CameraNode, CameraNodes, Cameras};
 use crate::materials::{Fallbacks, FrameUniform, NodeMaterial, ParamsBlob, node_sampler};
 use crate::params::{FrameClock, ParamState};
 use crate::plugin::{GraphRes, LibraryRes, NodeResolution};
@@ -215,6 +216,8 @@ pub fn build_runtime(
     mut node_shaders: ResMut<NodeShaders>,
     factories: Res<SourceFactories>,
     mut live_sources: ResMut<LiveSources>,
+    mut cameras: ResMut<Cameras>,
+    mut camera_nodes: ResMut<CameraNodes>,
 ) {
     let order = match graph.topo_order() {
         Ok(order) => order,
@@ -248,10 +251,12 @@ pub fn build_runtime(
                 (Output::Single(handle), None)
             }
             NodeKind::Camera { device } => {
-                warn!(
-                    "node `{id}`: live camera input (device {device}) has no capture backend in this build; showing placeholder"
-                );
-                (Output::Single(fallbacks.camera_placeholder.clone()), None)
+                let handle = images.add(crate::camera::placeholder_image());
+                let device = cameras.open(device);
+                camera_nodes
+                    .0
+                    .push(CameraNode::new(id.clone(), device, handle.clone()));
+                (Output::Single(handle), None)
             }
             NodeKind::Shader { node: def_name }
                 if library

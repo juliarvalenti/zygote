@@ -59,6 +59,7 @@ envelope, **Save**. The show file lands next to the project.
 | `projects/lattice` | Op-art from builtins only: a beating `checker` moiré through `kaleido` and `mirror_tile`, sharp in the centre and `pixelate`d at the edges via a `radial_gradient` mask into `luma_mask`. Keys chunk the pixels and kick the spin. |
 | `projects/orbs` | Bloom study: `voronoi` bubbles coloured by a palette, smeared upward by `streak`, thresholded `blur` added back with `blend`. LFOs breathe the cells and pulse the glow. |
 | `projects/etching` | Ink on paper: cell edges warped by noise through `warp`'s displacement input, traced by `edge_detect`, mirrored, `dither`ed to two levels and printed as two `solid` colours through `luma_mask`. |
+| `projects/mirror` | A webcam through the chain: `camera` into warp, kaleido, feedback and grading, with cues for a few looks and keys that ripple and wipe. |
 
 | `projects/haze` | `projects/mycelium` | `projects/scope` |
 | --- | --- | --- |
@@ -229,9 +230,28 @@ must not collide with imported items; the header parser rejects that.
 
 Bloom is a graph, not a node: `blur` with a threshold, then `blend` in `add`
 mode over the source. `examples/graphs/palette.json` chains most of the set.
-Structural kinds the renderer implements itself: `image` (PNG/JPEG asset,
-missing files render as a magenta checker and log an error) and `camera`
-(placeholder; no capture backend yet).
+
+**Sources the renderer implements itself.** `image` is a PNG/JPEG asset
+(missing files render as a magenta checker and log an error). `camera` is a
+live feed: `{ "type": "camera", "device": "0" }`, where the device is an
+index, a case-insensitive fragment of the camera's name, or `synthetic` for
+a built-in moving test picture. A capture thread per device fills a slot
+with the newest frame and the renderer uploads it when it changes; several
+nodes naming the same device share one capture. Parameters: `mirror`,
+`on_pause` (`hold` freezes the feed with the transport so the whole picture
+pauses together; `live` keeps it moving), and `output` (`colour`, `depth`
+as grey, or `colour_depth_alpha`, which puts depth in alpha so `luma_mask`
+on the alpha channel keys by distance). Webcams have no depth; the synthetic
+feed and, later, network depth cameras do. Real devices go through
+`nokhwa` (AVFoundation on macOS, V4L2 on Linux, Media Foundation on
+Windows; cargo feature `camera`, on by default). On macOS the OS asks for
+camera permission for the terminal you launch from. `ZYGOTE_CAMERA=synthetic`
+overrides every camera node's device, which is how the smoke test runs
+camera graphs on machines without one.
+
+| `colour_depth_alpha` keyed through `luma_mask` on alpha | `output: depth` |
+| --- | --- |
+| ![](docs/camera-depth.png) | (right half: near is dark, far is light) |
 
 If an effect cannot be expressed as one pass with these declarations, the
 answer is to grow this vocabulary in Zygote (a compute pass, an intermediate

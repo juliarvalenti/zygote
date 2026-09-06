@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use bevy::shader::Shader;
 use zygote_core::{AudioBands, DEFAULT_PORT, Graph, NodeLibrary};
 
+use crate::camera;
 use crate::materials::{Fallbacks, NodeMaterial};
 use crate::sources::{LiveSources, SourceFactories};
 use crate::{net, nodes, params, scene, sources};
@@ -117,7 +118,9 @@ impl Plugin for ZygotePlugin {
             .init_resource::<Fallbacks>()
             .init_resource::<nodes::NodeShaders>()
             .insert_resource(self.sources.clone())
-            .init_resource::<LiveSources>();
+            .init_resource::<LiveSources>()
+            .init_resource::<camera::Cameras>()
+            .init_resource::<camera::CameraNodes>();
 
         app.configure_sets(
             Update,
@@ -151,6 +154,8 @@ impl Plugin for ZygotePlugin {
                 nodes::rewire,
                 nodes::apply_params,
                 sources::update_sources,
+                camera::poll_cameras,
+                camera::upload_cameras,
             )
                 .chain()
                 .in_set(ZygoteSet::Apply),

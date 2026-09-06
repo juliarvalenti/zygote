@@ -24,8 +24,9 @@ pub use modulate::{
     SourceKind,
 };
 pub use node_def::{
-    BUILTIN_NODES, CpuSourceInfo, HeaderError, InputDef, MAX_INPUTS, NodeDef, NodeLibrary,
-    NodeOrigin, PREVIOUS_INPUT, UNIFORM_BYTES, UniformLayout, input_bindings, previous_bindings,
+    BUILTIN_NODES, CAMERA_NODE, CpuSourceInfo, HeaderError, InputDef, MAX_INPUTS, NodeDef,
+    NodeLibrary, NodeOrigin, PREVIOUS_INPUT, UNIFORM_BYTES, UniformLayout, camera_def,
+    input_bindings, previous_bindings,
 };
 pub use params::{ParamDescriptor, ParamKind, ParamSpec, ParamType, ParamValue};
 pub use protocol::{

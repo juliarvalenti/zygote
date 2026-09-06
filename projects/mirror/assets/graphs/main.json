@@ -1,0 +1,11 @@
+{
+  "name": "mirror",
+  "nodes": [
+    { "id": "cam",    "type": "camera", "device": "0", "params": { "mirror": true, "on_pause": "hold" } },
+    { "id": "ripple", "type": "warp", "inputs": ["cam"], "params": { "amount": 0.0, "scale": 3.0, "speed": 0.6, "twist": 0.0 } },
+    { "id": "fold",   "type": "kaleido", "inputs": ["ripple"], "params": { "segments": 1, "spin": 0.0 } },
+    { "id": "trails", "type": "feedback", "inputs": ["fold"], "params": { "decay": 0.0, "zoom": 1.0, "rotate": 0.0, "mix": 1.0 } },
+    { "id": "grade",  "type": "color_grade", "inputs": ["trails"], "params": { "saturation": 1.1, "posterize": 0 } }
+  ],
+  "output": "grade"
+}

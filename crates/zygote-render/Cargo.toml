@@ -14,7 +14,10 @@ name = "zygote"
 path = "src/bin/zygote.rs"
 
 [features]
-default = []
+default = ["camera"]
+# Real capture devices through nokhwa (AVFoundation on macOS, V4L2 on Linux,
+# Media Foundation on Windows). Without it only the `synthetic` device exists.
+camera = ["dep:nokhwa"]
 # Also watch Bevy's embedded assets (the shared WGSL module) for changes.
 # Project node files are always hot-reloaded.
 hot_reload = ["bevy/embedded_watcher", "bevy/file_watcher"]
@@ -26,4 +29,5 @@ zygote-macros.workspace = true
 nannou.workspace = true
 bevy = { workspace = true, features = ["bevy_pbr", "bevy_render", "bevy_asset", "bevy_image", "bevy_core_pipeline", "bevy_shader", "bevy_camera", "bevy_light", "bevy_mesh"] }
 serde_json.workspace = true
+nokhwa = { version = "0.10", features = ["input-native"], optional = true }
 anyhow.workspace = true

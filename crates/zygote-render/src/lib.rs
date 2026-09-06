@@ -32,6 +32,7 @@
 //! ```
 
 mod app;
+mod camera;
 mod capture;
 mod materials;
 mod net;

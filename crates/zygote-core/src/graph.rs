@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::node_def::{NodeDef, NodeLibrary};
+use crate::node_def::{CAMERA_NODE, NodeDef, NodeLibrary};
 use crate::params::{ParamDescriptor, ParamSpec, ParamValue};
 
 /// Stable identifier of a node inside a [`Graph`].
@@ -108,8 +108,11 @@ impl<'de> Deserialize<'de> for ParamPath {
 pub enum NodeKind {
     /// Static image (PNG/JPEG) from the asset directory.
     Image { path: String },
-    /// Live camera input. Placeholder until a capture backend exists.
-    Camera { device: u32 },
+    /// Live camera input. `device` names a capture device: an index
+    /// (`"0"`), a name fragment, `"synthetic"` for the built-in test feed,
+    /// or later a network stream (`"ilidar://host:port"`). Parameters come
+    /// from the builtin `camera` definition.
+    Camera { device: String },
     /// A node definition by name: `"warp"`, `"my_project_node"`, …
     Shader { node: String },
 }
@@ -132,7 +135,7 @@ impl NodeKind {
     pub fn label(&self) -> String {
         match self {
             NodeKind::Image { path } => format!("image · {path}"),
-            NodeKind::Camera { device } => format!("camera · device {device}"),
+            NodeKind::Camera { device } => format!("camera · {device}"),
             NodeKind::Shader { node } => node.clone(),
         }
     }
@@ -141,17 +144,19 @@ impl NodeKind {
         matches!(self, NodeKind::Image { .. } | NodeKind::Camera { .. })
     }
 
-    /// Definition of this kind, if it is a shader node the library knows.
+    /// Definition of this kind: the named node for shader nodes, the
+    /// builtin `camera` definition for cameras (its parameters), none for images.
     pub fn def<'l>(&self, library: &'l NodeLibrary) -> Option<&'l NodeDef> {
         match self {
             NodeKind::Shader { node } => library.get(node),
-            _ => None,
+            NodeKind::Camera { .. } => library.get(CAMERA_NODE),
+            NodeKind::Image { .. } => None,
         }
     }
 }
 
 /// File representation: `{"type": "image", "path": ...}`, `{"type": "camera",
-/// "device": 0}` or `{"type": "<node name>"}`.
+/// "device": "0"}` (a number is accepted too) or `{"type": "<node name>"}`.
 #[derive(Serialize, Deserialize)]
 struct KindRepr {
     #[serde(rename = "type")]
@@ -159,7 +164,14 @@ struct KindRepr {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    device: Option<u32>,
+    device: Option<DeviceRepr>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum DeviceRepr {
+    Index(u32),
+    Name(String),
 }
 
 impl Serialize for NodeKind {
@@ -173,7 +185,7 @@ impl Serialize for NodeKind {
             NodeKind::Camera { device } => KindRepr {
                 ty: "camera".into(),
                 path: None,
-                device: Some(*device),
+                device: Some(DeviceRepr::Name(device.clone())),
             },
             NodeKind::Shader { node } => KindRepr {
                 ty: node.clone(),
@@ -195,7 +207,11 @@ impl<'de> Deserialize<'de> for NodeKind {
                     .ok_or_else(|| serde::de::Error::custom("image node needs `path`"))?,
             },
             "camera" => NodeKind::Camera {
-                device: repr.device.unwrap_or(0),
+                device: match repr.device {
+                    Some(DeviceRepr::Index(i)) => i.to_string(),
+                    Some(DeviceRepr::Name(n)) => n,
+                    None => "0".to_owned(),
+                },
             },
             other => NodeKind::Shader {
                 node: other.to_owned(),
@@ -446,7 +462,8 @@ impl Graph {
                 .get(name)
                 .map(Some)
                 .ok_or_else(|| GraphError::UnknownKind(id.clone(), name.clone())),
-            _ => Ok(None),
+            NodeKind::Camera { .. } => Ok(library.get(CAMERA_NODE)),
+            NodeKind::Image { .. } => Ok(None),
         }
     }
 

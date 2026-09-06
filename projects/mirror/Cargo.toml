@@ -1,0 +1,14 @@
+[package]
+name = "zygote-mirror"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Live camera through the graph: warp, kaleidoscope, trails and grading on a webcam feed"
+publish = false
+
+[[bin]]
+name = "zygote-mirror"
+path = "src/main.rs"
+
+[dependencies]
+zygote-render.workspace = true

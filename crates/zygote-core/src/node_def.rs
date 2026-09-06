@@ -611,6 +611,40 @@ pub const BUILTIN_NODES: &[(&str, &str)] = &[
     ("vignette", include_str!("../nodes/vignette.wgsl")),
 ];
 
+/// Name of the builtin camera definition. Cameras are a structural kind
+/// (`NodeKind::Camera`, the device lives in the graph); this definition
+/// carries their parameters so the UI and cues treat them like any node.
+pub const CAMERA_NODE: &str = "camera";
+
+/// The camera's parameters. No shader: the renderer fills its texture from
+/// a capture device.
+pub fn camera_def() -> NodeDef {
+    NodeDef {
+        name: CAMERA_NODE.to_owned(),
+        doc: "Live camera. The device is set in the graph: an index (\"0\"), a name fragment, or \"synthetic\" for the built-in test feed".to_owned(),
+        inputs: Vec::new(),
+        feedback: false,
+        params: vec![
+            ParamSpec::choice(
+                "output",
+                &["colour", "depth", "colour_depth_alpha"],
+                "colour",
+                "The colour image; the depth plane as grey (devices that have one); or colour with depth in alpha, ready for luma_mask",
+            ),
+            ParamSpec::choice(
+                "on_pause",
+                &["hold", "live"],
+                "hold",
+                "While the transport is paused: hold the last frame so the picture freezes like everything else, or keep the feed live",
+            ),
+            ParamSpec::bool("mirror", true, "Flip horizontally so the image reads like a mirror"),
+        ],
+        source: String::new(),
+        origin: NodeOrigin::Builtin,
+        cpu_source: None,
+    }
+}
+
 impl NodeLibrary {
     pub fn empty() -> Self {
         Self::default()
@@ -624,6 +658,7 @@ impl NodeLibrary {
                 .unwrap_or_else(|e| panic!("builtin node `{name}` has an invalid header: {e}"));
             lib.insert(def);
         }
+        lib.insert(camera_def());
         lib
     }
 
@@ -844,6 +879,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             vec![
                 "blend",
                 "blur",
+                "camera",
                 "checker",
                 "color_grade",
                 "dither",

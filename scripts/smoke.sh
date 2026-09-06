@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 PROJECTS=("$@")
 if [ ${#PROJECTS[@]} -eq 0 ]; then
-  PROJECTS=(demo haze mycelium scope lattice orbs etching)
+  PROJECTS=(demo haze mycelium scope lattice orbs etching mirror)
 fi
 OUT=${SMOKE_OUT:-target/smoke}
 mkdir -p "$OUT"
@@ -32,6 +32,7 @@ floor_for() {
     lattice) echo "${SMOKE_MIN_MEAN:-0.10}" ;;
     orbs) echo "${SMOKE_MIN_MEAN:-0.05}" ;;
     etching) echo "${SMOKE_MIN_MEAN:-0.20}" ;;
+    mirror) echo "${SMOKE_MIN_MEAN:-0.05}" ;;
     *) echo "${SMOKE_MIN_MEAN:-0.02}" ;;
   esac
 }
@@ -53,6 +54,9 @@ if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null; then
     export VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}
   fi
 fi
+
+# Camera graphs run on the built-in test feed; the machine may have no camera.
+export ZYGOTE_CAMERA=${ZYGOTE_CAMERA:-synthetic}
 
 fail=0
 for p in "${PROJECTS[@]}"; do
