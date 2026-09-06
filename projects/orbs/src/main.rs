@@ -1,6 +1,6 @@
 //! Bloom is a graph, not a node: `blur` with a brightness threshold, added
 //! back over the source with `blend`. Here the source is `voronoi` in its
-//! bubbles mode, coloured by a palette and smeared upward by `streak`.
+//! bubbles mode, colored by a palette and smeared upward by `streak`.
 //! LFOs breathe the cell jitter and the bloom radius; a key flashes the
 //! bloom gain.
 

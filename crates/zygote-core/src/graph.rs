@@ -730,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn kind_serialises_as_type_field() {
+    fn kind_serializes_as_type_field() {
         let spec = NodeSpec::shader("w", "warp").with_inputs(["i"]);
         let json = serde_json::to_string(&spec).unwrap();
         assert_eq!(json, r#"{"id":"w","type":"warp","inputs":["i"]}"#);

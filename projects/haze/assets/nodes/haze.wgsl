@@ -1,5 +1,5 @@
 //! node: haze
-//! doc: 3D noise haze emitted from the centre and drifting outward
+//! doc: 3D noise haze emitted from the center and drifting outward
 //! param density: float = 0.7 in 0..2 "Overall haze brightness"
 //! param scale: float = 2.5 in 0.5..12 "Noise scale"
 //! param speed: float = 0.2 in 0..2 "Outward drift"
@@ -18,7 +18,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = p / max(r, 1e-4);
 
     // Translate the field along the radial direction so structure moves outward,
-    // and stretch it radially so it reads as streaks emitted from the centre.
+    // and stretch it radially so it reads as streaks emitted from the center.
     let radial = vec2<f32>(r * params.scale - t * params.speed * params.scale, atan2(dir.y, dir.x) * 2.5);
     let q = vec3<f32>(radial, t * params.turbulence);
     var n = fbm3(q, params.octaves);

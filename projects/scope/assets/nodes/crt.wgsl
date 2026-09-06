@@ -1,8 +1,8 @@
 //! node: crt
-//! doc: The tube: phosphor colour, graticule, curved glass, vignette and a little flutter
+//! doc: The tube: phosphor color, graticule, curved glass, vignette and a little flutter
 //! input phosphor
-//! param tint: color = #46ff78 "Phosphor colour"
-//! param hot: color = #f0fff2 "Colour where the phosphor saturates"
+//! param tint: color = #46ff78 "Phosphor color"
+//! param hot: color = #f0fff2 "Color where the phosphor saturates"
 //! param graticule: float = 0.07 in 0..1 "Grid brightness"
 //! param divisions: int = 8 in 2..16 "Grid divisions across the screen"
 //! param curvature: float = 0.10 in 0..0.4 "Barrel distortion of the glass"
@@ -20,7 +20,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
 
-    // Graticule: a grid in screen height units, with heavier centre axes.
+    // Graticule: a grid in screen height units, with heavier center axes.
     let g = (warped - 0.5) * vec2<f32>(frame.aspect, 1.0) * f32(params.divisions);
     let cell = abs(fract(g + 0.5) - 0.5);
     let line = 1.0 - smoothstep(0.0, 0.03 * f32(params.divisions) / 8.0, min(cell.x, cell.y));

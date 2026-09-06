@@ -14,7 +14,7 @@ pub struct Project {
     pub package: String,
     pub description: String,
     pub dir: PathBuf,
-    /// `assets/graphs/main.json`, summarised if it parses.
+    /// `assets/graphs/main.json`, summarized if it parses.
     pub graph: Option<GraphInfo>,
     /// The first `*.show.json` in the directory, if any.
     pub show_file: Option<PathBuf>,

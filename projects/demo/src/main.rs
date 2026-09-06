@@ -21,7 +21,7 @@ pub struct RgbShift {
     /// Direction of the offset (turns)
     #[param(default = 0.0, min = 0.0, max = 1.0)]
     pub angle: f32,
-    /// Let the offset grow with distance from the centre, like a cheap lens
+    /// Let the offset grow with distance from the center, like a cheap lens
     #[param(default = 0.5, min = 0.0, max = 1.0)]
     pub radial: f32,
     /// Blend between the shifted and the original image

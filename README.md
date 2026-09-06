@@ -56,9 +56,9 @@ envelope, **Save**. The show file lands next to the project.
 | `projects/haze` | Monochrome pulsing geometry and 3D-noise haze from a central point. Three WGSL nodes. |
 | `projects/mycelium` | A CPU simulation source (tip-growth network traced by nutrient agents) with LFOs and an envelope on its parameters. |
 | `projects/scope` | An analog XY oscilloscope: the beam traces Lissajous knots onto slow phosphor; cues step through harmonic ratios, an LFO turns the figure, keys flash and wipe it. Three WGSL nodes. |
-| `projects/lattice` | Op-art from builtins only: a beating `checker` moiré through `kaleido` and `mirror_tile`, sharp in the centre and `pixelate`d at the edges via a `radial_gradient` mask into `luma_mask`. Keys chunk the pixels and kick the spin. |
-| `projects/orbs` | Bloom study: `voronoi` bubbles coloured by a palette, smeared upward by `streak`, thresholded `blur` added back with `blend`. LFOs breathe the cells and pulse the glow. |
-| `projects/etching` | Ink on paper: cell edges warped by noise through `warp`'s displacement input, traced by `edge_detect`, mirrored, `dither`ed to two levels and printed as two `solid` colours through `luma_mask`. |
+| `projects/lattice` | Op-art from builtins only: a beating `checker` moiré through `kaleido` and `mirror_tile`, sharp in the center and `pixelate`d at the edges via a `radial_gradient` mask into `luma_mask`. Keys chunk the pixels and kick the spin. |
+| `projects/orbs` | Bloom study: `voronoi` bubbles colored by a palette, smeared upward by `streak`, thresholded `blur` added back with `blend`. LFOs breathe the cells and pulse the glow. |
+| `projects/etching` | Ink on paper: cell edges warped by noise through `warp`'s displacement input, traced by `edge_detect`, mirrored, `dither`ed to two levels and printed as two `solid` colors through `luma_mask`. |
 
 | `projects/haze` | `projects/mycelium` | `projects/scope` |
 | --- | --- | --- |
@@ -90,7 +90,7 @@ Renderer options: `[graph.json] [--port N] [--size WxH] [--assets DIR]
 
 **Graph and parameters.** The UI asks the renderer for its graph structure
 and parameter list, draws the graph, and builds one control per parameter:
-sliders for floats and ints, per-component sliders for vec2 and colour
+sliders for floats and ints, per-component sliders for vec2 and color
 (r, g, b, a), a switch for bools, a button row for choices. Click a node in
 the graph to focus its parameters, click empty canvas to show all. Image
 sources show their file as a thumbnail on the graph and a preview in the
@@ -115,7 +115,7 @@ line then a jump cuts (`Into cue: step / ramp`).
 square; rate, phase) and ADSR envelopes fired by a named trigger. Each float
 or int row has a `mod` chip: pick a source and a bipolar depth, and the
 source's value times depth is *added* to the resolved value, so the slider
-always means the centre and depth 0 is exactly the slider. A dark ghost
+always means the center and depth 0 is exactly the slider. A dark ghost
 mark on the slider shows where the value actually is. Sources run on the
 transport clock, so pausing freezes them and scrubbing rewinds them, and
 both processes evaluate the same definition. Envelopes are a pure function
@@ -199,10 +199,10 @@ fn main() {
 
 **Parameter types:** `float` (min..max), `int` (min..max, stepped), `bool`,
 `choice` (named options; a `u32` index in WGSL), `color` (`#rrggbb` or
-`#rrggbbaa`, a `vec4<f32>`), `vec2` (`x, y`). Floats, vec2 and colours
+`#rrggbbaa`, a `vec4<f32>`), `vec2` (`x, y`). Floats, vec2 and colors
 interpolate between cues, ints step through whole values, bools and choices
-hold until the target cue's time. Colours are RGBA: generators emit their
-colour's alpha, filters keep their source's alpha, `blend` and `luma_mask`
+hold until the target cue's time. Colors are RGBA: generators emit their
+color's alpha, filters keep their source's alpha, `blend` and `luma_mask`
 composite it, trails let it decay. The output quad is opaque, so alpha only
 matters inside the graph.
 

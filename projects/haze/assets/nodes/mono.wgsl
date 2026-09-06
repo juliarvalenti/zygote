@@ -1,7 +1,7 @@
 //! node: mono
 //! doc: Black-and-white finish: contrast, gamma, grain, vignette and glitch bands
 //! input source
-//! param contrast: float = 1.5 in 0.2..4 "Contrast around mid grey"
+//! param contrast: float = 1.5 in 0.2..4 "Contrast around mid gray"
 //! param gamma: float = 1.1 in 0.2..3 "Tone curve"
 //! param grain: float = 0.10 in 0..1 "Film grain"
 //! param vignette: float = 0.7 in 0..2 "Edge darkening"

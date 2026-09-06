@@ -1,7 +1,7 @@
 //! Zygote timeline: state, wiring and the window.
 //!
 //! `run` opens the window; `TimelineApp` is the whole UI state; the modules
-//! below split behaviour by concern. See the note above the `mod` lines.
+//! below split behavior by concern. See the note above the `mod` lines.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};

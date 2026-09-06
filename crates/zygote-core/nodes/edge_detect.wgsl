@@ -1,10 +1,10 @@
 //! node: edge_detect
-//! doc: Sobel edges; as white lines, drawn over the source, or in the source's own colours
+//! doc: Sobel edges; as white lines, drawn over the source, or in the source's own colors
 //! input source
 //! param radius: float = 0.0015 in 0.0002..0.01 "Sample spacing (fraction of frame height)"
 //! param gain: float = 2 in 0..8 "Edge strength"
 //! param threshold: float = 0.05 in 0..1 "Ignore edges weaker than this"
-//! param mode: choice = lines [lines, overlay, colour] "Output"
+//! param mode: choice = lines [lines, overlay, color] "Output"
 #import zygote::common::{luma}
 
 fn l(uv: vec2<f32>) -> f32 {
