@@ -8,6 +8,7 @@ members = [
     "projects/demo",
     "projects/haze",
     "projects/mycelium",
+    "projects/scope",
 ]
 
 [workspace.package]

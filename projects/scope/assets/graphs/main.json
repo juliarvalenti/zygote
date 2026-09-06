@@ -1,0 +1,23 @@
+{
+  "name": "scope",
+  "nodes": [
+    {
+      "id": "beam",
+      "type": "beam",
+      "params": { "ratio_x": 3.0, "ratio_y": 2.0, "phase": 0.25, "speed": 0.5, "depth": 0.45 }
+    },
+    {
+      "id": "phosphor",
+      "type": "phosphor",
+      "inputs": ["beam"],
+      "params": { "persistence": 0.975, "bloom": 0.7 }
+    },
+    {
+      "id": "crt",
+      "type": "crt",
+      "inputs": ["phosphor"],
+      "params": { "tint": "#46ff78", "graticule": 0.07 }
+    }
+  ],
+  "output": "crt"
+}

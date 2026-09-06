@@ -1,0 +1,33 @@
+{
+  "cues": [
+    { "id": 1, "time": 0.0,  "label": "ring",     "transition": "cut",         "values": { "beam.ratio_x": 1.0, "beam.ratio_y": 1.0, "beam.depth": 0.6, "beam.focus": 0.007, "crt.tint": "#46ff78" } },
+    { "id": 2, "time": 6.0,  "label": "eight",    "transition": "interpolate", "values": { "beam.ratio_x": 1.0, "beam.ratio_y": 2.0, "beam.depth": 0.45, "beam.focus": 0.007, "crt.tint": "#46ff78" } },
+    { "id": 3, "time": 12.0, "label": "2:3",      "transition": "interpolate", "values": { "beam.ratio_x": 2.0, "beam.ratio_y": 3.0, "beam.depth": 0.45, "beam.focus": 0.006, "crt.tint": "#46ff78" } },
+    { "id": 4, "time": 18.0, "label": "3:4",      "transition": "interpolate", "values": { "beam.ratio_x": 3.0, "beam.ratio_y": 4.0, "beam.depth": 0.5,  "beam.focus": 0.006, "crt.tint": "#5ef2a8" } },
+    { "id": 5, "time": 24.0, "label": "3:5 amber","transition": "interpolate", "values": { "beam.ratio_x": 3.0, "beam.ratio_y": 5.0, "beam.depth": 0.8,  "beam.focus": 0.005, "crt.tint": "#ffb347" } },
+    { "id": 6, "time": 30.0, "label": "5:6",      "transition": "interpolate", "values": { "beam.ratio_x": 5.0, "beam.ratio_y": 6.0, "beam.depth": 0.7,  "beam.focus": 0.005, "crt.tint": "#ffb347" } },
+    { "id": 7, "time": 36.0, "label": "5:8 ice",  "transition": "interpolate", "values": { "beam.ratio_x": 5.0, "beam.ratio_y": 8.0, "beam.depth": 0.5,  "beam.focus": 0.004, "crt.tint": "#7ad7ff" } },
+    { "id": 8, "time": 44.0, "label": "unwind",   "transition": "interpolate", "values": { "beam.ratio_x": 1.0, "beam.ratio_y": 1.0, "beam.depth": 0.6,  "beam.focus": 0.007, "crt.tint": "#46ff78" } }
+  ],
+  "duration": 48.0,
+  "looping": true,
+  "modulation": {
+    "sources": [
+      { "id": "turn",  "kind": "lfo", "rate_hz": 0.02, "phase": 0.0,  "shape": "sine" },
+      { "id": "sway",  "kind": "lfo", "rate_hz": 0.07, "phase": 0.25, "shape": "triangle" },
+      { "id": "flash", "kind": "envelope", "adsr": { "attack": 0.01, "decay": 0.25, "sustain": 0.3, "release": 0.6 }, "trigger": "flash" },
+      { "id": "wipe",  "kind": "envelope", "adsr": { "attack": 0.02, "decay": 0.1, "sustain": 1.0, "release": 0.4 }, "trigger": "wipe" }
+    ],
+    "assignments": [
+      { "target": "beam.phase",            "source": "turn",  "depth": 0.5 },
+      { "target": "beam.depth",            "source": "sway",  "depth": 0.25 },
+      { "target": "beam.intensity",        "source": "flash", "depth": 2.0 },
+      { "target": "phosphor.persistence",  "source": "wipe",  "depth": -0.6 }
+    ]
+  },
+  "keys": {
+    "q": { "action": "trigger", "trigger": "flash" },
+    "w": { "action": "trigger", "trigger": "wipe" }
+  },
+  "next_id": 9
+}

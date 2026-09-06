@@ -14,19 +14,21 @@ cd "$(dirname "$0")/.."
 
 PROJECTS=("$@")
 if [ ${#PROJECTS[@]} -eq 0 ]; then
-  PROJECTS=(demo haze mycelium)
+  PROJECTS=(demo haze mycelium scope)
 fi
 OUT=${SMOKE_OUT:-target/smoke}
 mkdir -p "$OUT"
 FRAMES=${SMOKE_FRAMES:-90}
 
 # Per-project brightness floor (fraction of full white; a black frame is ~0).
-# Mycelium is a dark piece by design, so its floor is lower.
+# Mycelium is dark by design and the scope is a thin trace on black, so
+# their floors are lower.
 floor_for() {
   case "$1" in
     demo) echo "${SMOKE_MIN_MEAN:-0.10}" ;;
     haze) echo "${SMOKE_MIN_MEAN:-0.05}" ;;
     mycelium) echo "${SMOKE_MIN_MEAN:-0.03}" ;;
+    scope) echo "${SMOKE_MIN_MEAN:-0.004}" ;;
     *) echo "${SMOKE_MIN_MEAN:-0.02}" ;;
   esac
 }

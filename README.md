@@ -22,10 +22,15 @@ own nodes in Rust or WGSL.
 | `projects/demo` | A project consuming the engine: one Rust-declared node, one WGSL-file node, its own graph and assets. |
 | `projects/haze` | Proof-of-concept show: monochrome pulsing geometry and noise haze from a central point, three WGSL nodes. |
 | `projects/mycelium` | A CPU simulation source (tip-growth network traced by nutrient agents) with LFOs and an envelope on its parameters. |
+| `projects/scope` | An analog XY oscilloscope: the beam traces Lissajous knots onto slow phosphor (feedback), a show file steps through harmonic ratios with ramps and turns the figure with an LFO. Three WGSL nodes. |
 
-| `projects/haze` | `projects/mycelium` | timeline UI with the modulation rack |
+| `projects/haze` | `projects/mycelium` | `projects/scope` |
 | --- | --- | --- |
-| ![](docs/render-haze.png) | ![](docs/render-mycelium.png) | ![](docs/timeline-ui.png) |
+| ![](docs/render-haze.png) | ![](docs/render-mycelium.png) | ![](docs/render-scope.png) |
+
+| timeline UI: graph as node filter, modulation rack, cues | `projects/scope` through its cues |
+| --- | --- |
+| ![](docs/timeline-ui.png) | ![](docs/scope-cues.png) |
 
 ## Running
 
@@ -33,6 +38,7 @@ own nodes in Rust or WGSL.
 cargo run --release -p zygote-haze        # monochrome proof of concept
 cargo run --release -p zygote-mycelium    # CPU simulation source with LFOs
 cargo run --release -p zygote-timeline -- projects/mycelium/mycelium.show.json
+cargo run --release -p zygote-scope       # XY oscilloscope; pair with projects/scope/scope.show.json
 cargo run --release -p zygote-demo        # a project: image → warp → kaleido → feedback → scanlines
 cargo run --release -p zygote-timeline    # the UI; connects to udp://127.0.0.1:9471
 cargo run --release -p zygote -- --showcase   # stock renderer, builtin nodes only
