@@ -17,6 +17,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+libc = "=0.2.189"
 zygote-core = { path = "crates/zygote-core" }
 zygote-macros = { path = "crates/zygote-macros" }
 zygote-render = { path = "crates/zygote-render" }

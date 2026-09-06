@@ -7,10 +7,14 @@
 //! renderer over UDP as `node.param = value` messages.
 //!
 //! ```text
-//! zygote-timeline [timeline.json] [--target 127.0.0.1:9471]
+//! zygote-timeline                                   # project browser
+//! zygote-timeline [timeline.json] [--target 127.0.0.1:9471]  # straight into a show
 //! ```
 
 mod app;
+mod projects;
+mod shell;
+mod supervisor;
 
 fn main() {
     app::run();

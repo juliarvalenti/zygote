@@ -230,7 +230,8 @@ impl ZygoteApp {
     ///
     /// ```text
     /// [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR]
-    /// [--showcase] [--free-run] [--capture out.png [--frames N] [--every K]]
+    /// [--showcase] [--free-run] [--exit-with-parent]
+    /// [--capture out.png [--frames N] [--every K]]
     /// ```
     pub fn parse_args(mut self) -> Self {
         let mut args = std::env::args().skip(1);
@@ -288,6 +289,7 @@ impl ZygoteApp {
                     self.graph_file = None;
                 }
                 "--free-run" => self.settings.free_run = true,
+                "--exit-with-parent" => self.settings.exit_with_parent = true,
                 "-h" | "--help" => usage(""),
                 path if !path.starts_with('-') => self.graph_file = Some(PathBuf::from(path)),
                 other => usage(&format!("unknown argument {other}")),
@@ -392,7 +394,7 @@ fn usage(error: &str) -> ! {
         eprintln!("error: {error}\n");
     }
     eprintln!(
-        "usage: <project> [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR] [--showcase] [--free-run] [--capture out.png [--frames N] [--every K]]"
+        "usage: <project> [graph.json] [--port N] [--size WxH] [--assets DIR] [--nodes DIR] [--showcase] [--free-run] [--exit-with-parent] [--capture out.png [--frames N] [--every K]]"
     );
     std::process::exit(if error.is_empty() { 0 } else { 2 });
 }

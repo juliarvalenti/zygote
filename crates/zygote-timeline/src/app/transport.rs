@@ -4,6 +4,10 @@ use super::*;
 
 impl TimelineApp {
     pub(super) fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.auto_tile && !self.tiled && self.graph.is_some() {
+            self.auto_tile = false;
+            self.tile(window, cx);
+        }
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f32();
         self.last_tick = now;

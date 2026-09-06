@@ -67,23 +67,5 @@
       }
     }
   ],
-  "output": "mono",
-  "modulations": [
-    {
-      "target": "haze.density",
-      "source": "lfo",
-      "rate_hz": 0.08,
-      "phase": 0.0,
-      "shape": "sine",
-      "depth": 0.25
-    },
-    {
-      "target": "lines.rotate",
-      "source": "lfo",
-      "rate_hz": 0.03,
-      "phase": 0.25,
-      "shape": "triangle",
-      "depth": 0.015
-    }
-  ]
+  "output": "mono"
 }

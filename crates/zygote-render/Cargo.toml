@@ -20,6 +20,7 @@ default = []
 hot_reload = ["bevy/embedded_watcher", "bevy/file_watcher"]
 
 [dependencies]
+libc.workspace = true
 zygote-core.workspace = true
 zygote-macros.workspace = true
 nannou.workspace = true

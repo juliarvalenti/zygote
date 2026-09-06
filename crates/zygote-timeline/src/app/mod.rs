@@ -63,16 +63,30 @@ actions!(
     ]
 );
 
-struct Options {
-    file: PathBuf,
-    target: String,
+/// Which show file to edit and which renderer to drive.
+pub(crate) struct Options {
+    pub(crate) file: PathBuf,
+    pub(crate) target: String,
+    /// Tile the output window beside this one as soon as the renderer answers.
+    pub(crate) auto_tile: bool,
 }
 
-fn parse_args() -> Options {
+/// Events the timeline raises for whoever hosts it.
+pub(crate) enum TimelineEvent {
+    /// The user asked for the project browser.
+    Projects,
+}
+
+impl EventEmitter<TimelineEvent> for TimelineApp {}
+
+/// `None` when nothing was asked for: open the project browser.
+fn parse_args() -> Option<Options> {
     let mut options = Options {
         file: PathBuf::from("zygote-timeline.json"),
         target: format!("127.0.0.1:{DEFAULT_PORT}"),
+        auto_tile: false,
     };
+    let mut given = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -80,20 +94,25 @@ fn parse_args() -> Options {
                 options.target = args
                     .next()
                     .unwrap_or_else(|| usage("--target needs host:port"));
+                given = true;
             }
             "-h" | "--help" => usage(""),
-            path if !path.starts_with('-') => options.file = PathBuf::from(path),
+            path if !path.starts_with('-') => {
+                options.file = PathBuf::from(path);
+                given = true;
+            }
             other => usage(&format!("unknown argument {other}")),
         }
     }
-    options
+    given.then_some(options)
 }
 
 fn usage(error: &str) -> ! {
     if !error.is_empty() {
         eprintln!("error: {error}\n");
     }
-    eprintln!("usage: zygote-timeline [timeline.json] [--target host:port]");
+    eprintln!("usage: zygote-timeline                         open the project browser");
+    eprintln!("       zygote-timeline [show.json] [--target host:port]");
     std::process::exit(if error.is_empty() { 0 } else { 2 });
 }
 
@@ -139,7 +158,7 @@ pub fn run() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view = cx.new(|cx| TimelineApp::new(options, window, cx));
+                    let view = cx.new(|cx| crate::shell::Shell::new(options, window, cx));
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )
@@ -215,6 +234,7 @@ pub struct TimelineApp {
     drag: Drag,
     axis_bounds: Rc<Cell<Bounds<Pixels>>>,
     tiled: bool,
+    auto_tile: bool,
     /// The timeline is the built-in demo, not a file; it may be replaced by a
     /// fresh one once the renderer describes a graph it does not fit.
     timeline_is_default: bool,
@@ -233,7 +253,7 @@ pub struct TimelineApp {
 }
 
 impl TimelineApp {
-    fn new(options: Options, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(options: Options, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (timeline, status, timeline_is_default) = match std::fs::read_to_string(&options.file) {
             Ok(json) => match Timeline::from_json(&json) {
                 Ok(t) => (t, format!("loaded {}", options.file.display()), false),
@@ -291,6 +311,7 @@ impl TimelineApp {
             drag: Drag::None,
             axis_bounds: Rc::new(Cell::new(Bounds::default())),
             tiled: false,
+            auto_tile: options.auto_tile,
             timeline_is_default,
             status,
             gates: GateLog::default(),
@@ -321,6 +342,10 @@ impl TimelineApp {
         .detach();
 
         this
+    }
+
+    pub(crate) fn focus_handle(&self) -> FocusHandle {
+        self.focus_handle.clone()
     }
 
     fn mode(&self) -> Mode {

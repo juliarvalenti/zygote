@@ -11766,6 +11766,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "libc",
  "nannou",
  "serde_json",
  "zygote-core",

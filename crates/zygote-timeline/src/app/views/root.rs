@@ -11,6 +11,14 @@ impl Render for TimelineApp {
         let header = h_flex()
             .items_center()
             .gap_2()
+            .child(
+                Button::new("projects")
+                    .small()
+                    .ghost()
+                    .icon(IconName::PanelLeft)
+                    .tooltip("Back to the project list (the renderer keeps running)")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(TimelineEvent::Projects))),
+            )
             .child(div().text_lg().child("Zygote"))
             .child(
                 div()

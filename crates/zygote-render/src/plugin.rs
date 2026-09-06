@@ -18,6 +18,9 @@ pub struct RenderSettings {
     pub resolution: UVec2,
     /// Ignore transport messages and always run on the wall clock.
     pub free_run: bool,
+    /// Exit when the process that started us goes away (a UI that launched
+    /// this renderer), so a crashed or killed host leaves no orphan.
+    pub exit_with_parent: bool,
     /// Directory image paths are relative to (`<asset root>/assets`). Sent
     /// to UIs so they can preview image sources; `None` sends no previews.
     pub assets_dir: Option<std::path::PathBuf>,
@@ -30,6 +33,7 @@ impl Default for RenderSettings {
             port: DEFAULT_PORT,
             resolution: UVec2::new(1280, 720),
             free_run: false,
+            exit_with_parent: false,
             assets_dir: None,
         }
     }
@@ -94,6 +98,9 @@ impl Plugin for ZygotePlugin {
 
         app.add_plugins(MaterialPlugin::<NodeMaterial>::default());
 
+        if self.settings.exit_with_parent {
+            app.add_systems(Update, exit_with_parent);
+        }
         app.insert_resource(GraphRes(self.settings.graph.clone()))
             .insert_resource(LibraryRes(self.library.clone()))
             .insert_resource(NodeResolution(self.settings.resolution))
@@ -156,3 +163,33 @@ fn load_common_shader(mut commands: Commands, asset_server: Res<AssetServer>) {
     let handle: Handle<Shader> = asset_server.load("embedded://zygote_render/shaders/common.wgsl");
     commands.insert_resource(CommonShader(handle));
 }
+
+/// Quit once our parent process is gone. The parent pid is read on the
+/// first run; when it changes the original parent has exited and we were
+/// re-parented to init (or a subreaper).
+#[cfg(unix)]
+fn exit_with_parent(
+    mut parent: Local<Option<i32>>,
+    mut last_check: Local<f64>,
+    time: Res<Time<Real>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let now = time.elapsed_secs_f64();
+    if now - *last_check < 1.0 {
+        return;
+    }
+    *last_check = now;
+    // SAFETY: getppid has no preconditions and cannot fail.
+    let current = unsafe { libc::getppid() };
+    match *parent {
+        None => *parent = Some(current),
+        Some(original) if original != current => {
+            info!("parent process {original} is gone; exiting");
+            exit.write(AppExit::Success);
+        }
+        Some(_) => {}
+    }
+}
+
+#[cfg(not(unix))]
+fn exit_with_parent() {}
