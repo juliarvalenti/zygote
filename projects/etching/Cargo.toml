@@ -3,7 +3,7 @@ name = "zygote-etching"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Ink on paper: noise warped by a cellular displacement map, traced by edge detection, dithered and printed as two solid colours"
+description = "Ink on paper: noise warped by a cellular displacement map, traced by edge detection, dithered and printed as two solid colors"
 publish = false
 
 [[bin]]

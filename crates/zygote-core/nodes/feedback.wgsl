@@ -18,8 +18,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let steps = clamp(frame.dt * 60.0, 0.0, 10.0);
     let zoom = pow(max(params.zoom, 1e-3), steps);
     let decay = pow(max(params.decay, 1e-4), steps);
-    let centred = (in.uv - 0.5) * vec2<f32>(aspect, 1.0);
-    let prev_uv = rotate2(centred / zoom, -params.rotate * steps) / vec2<f32>(aspect, 1.0) + 0.5;
+    let centered = (in.uv - 0.5) * vec2<f32>(aspect, 1.0);
+    let prev_uv = rotate2(centered / zoom, -params.rotate * steps) / vec2<f32>(aspect, 1.0) + 0.5;
 
     let prev4 = previous(prev_uv);
     var prev = prev4.rgb;

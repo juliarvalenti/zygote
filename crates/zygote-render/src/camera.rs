@@ -3,9 +3,9 @@
 //! A *device* is a string in the graph (`"0"`, a name fragment,
 //! `"synthetic"`, later `"ilidar://host:port"`). [`Cameras`] opens each
 //! device once and every `camera` node naming it reads the same frames, so
-//! two nodes can show colour and depth of one feed. A backend is a capture
+//! two nodes can show color and depth of one feed. A backend is a capture
 //! thread that fills a [`Slot`] with the newest [`Frame`]; the render side
-//! never waits on it. Frames carry a colour plane and an optional depth
+//! never waits on it. Frames carry a color plane and an optional depth
 //! plane from day one; the webcam backend leaves depth empty.
 //!
 //! Each frame the newest capture is written into the node's texture,
@@ -38,7 +38,7 @@ pub struct Frame {
 }
 
 /// Depth in device units (millimetres for the sensors we expect); 0 means
-/// unknown. May be a different size from the colour plane.
+/// unknown. May be a different size from the color plane.
 pub struct DepthPlane {
     pub width: u32,
     pub height: u32,
@@ -173,9 +173,9 @@ pub fn poll_cameras(mut cameras: ResMut<Cameras>) {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Output {
-    Colour,
+    Color,
     Depth,
-    ColourDepthAlpha,
+    ColorDepthAlpha,
 }
 
 /// Write the newest frame into each camera node's texture.
@@ -207,8 +207,8 @@ pub fn upload_cameras(
         let mirror = matches!(param("mirror"), Some(ParamValue::Bool(true)));
         let output = match param("output") {
             Some(ParamValue::Choice(c)) if c == "depth" => Output::Depth,
-            Some(ParamValue::Choice(c)) if c == "colour_depth_alpha" => Output::ColourDepthAlpha,
-            _ => Output::Colour,
+            Some(ParamValue::Choice(c)) if c == "color_depth_alpha" => Output::ColorDepthAlpha,
+            _ => Output::Color,
         };
         let Some(mut image) = images.get_mut(&node.image) else {
             continue;
@@ -226,8 +226,8 @@ pub fn upload_cameras(
     }
 }
 
-/// Depth at colour-plane pixel (x, y), scaled to 0..255, or 255 (near) when
-/// the frame has no depth so `colour_depth_alpha` degrades to plain colour.
+/// Depth at color-plane pixel (x, y), scaled to 0..255, or 255 (near) when
+/// the frame has no depth so `color_depth_alpha` degrades to plain color.
 fn depth8(frame: &Frame, x: u32, y: u32) -> u8 {
     let Some(d) = &frame.depth else { return 255 };
     let dx = (x as u64 * d.width as u64 / frame.width.max(1) as u64) as u32;
@@ -248,7 +248,7 @@ fn compose(frame: &Frame, output: Output, mirror: bool) -> (u32, u32, Vec<u8>) {
             let src = ((y * w + sx) * 4) as usize;
             let dst = ((y * w + x) * 4) as usize;
             match output {
-                Output::Colour => {
+                Output::Color => {
                     out[dst..dst + 3].copy_from_slice(&frame.rgba[src..src + 3]);
                     out[dst + 3] = 255;
                 }
@@ -259,7 +259,7 @@ fn compose(frame: &Frame, output: Output, mirror: bool) -> (u32, u32, Vec<u8>) {
                     out[dst + 2] = d;
                     out[dst + 3] = 255;
                 }
-                Output::ColourDepthAlpha => {
+                Output::ColorDepthAlpha => {
                     out[dst..dst + 3].copy_from_slice(&frame.rgba[src..src + 3]);
                     out[dst + 3] = depth8(frame, sx, y);
                 }

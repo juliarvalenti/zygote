@@ -3,7 +3,7 @@
 //! A show's [`Modulation`] is a list of shared [`ModSource`]s and a list of
 //! [`Assignment`]s. Each assignment adds `depth * source_value` on top of a
 //! parameter's resolved value (base → cue → live), so the slider always means
-//! "the centre" and depth 0 is exactly the slider. Every source is a pure
+//! "the center" and depth 0 is exactly the slider. Every source is a pure
 //! function of transport time (plus the gate log for envelopes), so pausing
 //! freezes it, scrubbing rewinds it, and the UI and renderer agree exactly.
 
@@ -15,7 +15,7 @@ use crate::graph::ParamPath;
 /// is stable before real audio analysis exists.
 pub const AUDIO_BAND_COUNT: usize = 8;
 
-/// Normalised (0..1) energy per frequency band, low to high.
+/// Normalized (0..1) energy per frequency band, low to high.
 ///
 /// Nothing in this repository fills this yet. An audio-analysis stage only has
 /// to write into this struct each frame for audio sources to work.
@@ -69,7 +69,7 @@ impl LfoShape {
         }
     }
 
-    /// Bipolar waveform at normalised phase `t` in `0..1`.
+    /// Bipolar waveform at normalized phase `t` in `0..1`.
     pub fn sample(self, t: f32) -> f32 {
         let t = t.rem_euclid(1.0);
         match self {
@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn serialises_flat() {
+    fn serializes_flat() {
         let mut m = Modulation::default();
         m.sources
             .push(ModSource::lfo("lfo1", 0.5, LfoShape::Triangle));

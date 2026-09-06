@@ -17,12 +17,12 @@ fn board(p: vec2<f32>) -> f32 {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let centred = (in.uv - 0.5) * vec2<f32>(frame.aspect, 1.0);
+    let centered = (in.uv - 0.5) * vec2<f32>(frame.aspect, 1.0);
     let scroll = vec2<f32>(frame.time * params.speed, 0.0);
-    let p = rotate2(centred, params.rotate * TAU) * params.cells + scroll;
+    let p = rotate2(centered, params.rotate * TAU) * params.cells + scroll;
     var v = board(p);
     if params.moire > 0.0 {
-        let q = rotate2(centred, (params.rotate + params.moire) * TAU) * params.cells + scroll;
+        let q = rotate2(centered, (params.rotate + params.moire) * TAU) * params.cells + scroll;
         v = abs(v - board(q));
     }
     return mix(params.color_a, params.color_b, v);

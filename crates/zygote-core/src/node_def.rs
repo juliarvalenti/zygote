@@ -627,9 +627,9 @@ pub fn camera_def() -> NodeDef {
         params: vec![
             ParamSpec::choice(
                 "output",
-                &["colour", "depth", "colour_depth_alpha"],
-                "colour",
-                "The colour image; the depth plane as grey (devices that have one); or colour with depth in alpha, ready for luma_mask",
+                &["color", "depth", "color_depth_alpha"],
+                "color",
+                "The color image; the depth plane as gray (devices that have one); or color with depth in alpha, ready for luma_mask",
             ),
             ParamSpec::choice(
                 "on_pause",

@@ -8,7 +8,7 @@
 
 const TAPS: i32 = 4; // taps run -TAPS..=TAPS per axis
 
-// Colour above the threshold; alpha is blurred as-is.
+// Color above the threshold; alpha is blurred as-is.
 fn bright(uv: vec2<f32>) -> vec4<f32> {
     let c = source(uv);
     let rgb = max(c.rgb - vec3<f32>(params.threshold), vec3<f32>(0.0)) / max(1.0 - params.threshold, 1e-3);

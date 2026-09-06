@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// A parameter's current value.
 ///
-/// Serialises untagged so graph files and cue files stay readable:
+/// Serializes untagged so graph files and cue files stay readable:
 /// `0.5`, `true`, `"screen"`, `"#ff8844"`, `[0.1, 0.2]`, `[1, 0.5, 0, 1]`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamValue {

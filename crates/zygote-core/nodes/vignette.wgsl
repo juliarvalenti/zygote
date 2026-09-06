@@ -5,7 +5,7 @@
 //! param radius: float = 0.55 in 0..1.5 "Where the falloff starts (fraction of frame height)"
 //! param softness: float = 0.5 in 0.001..2 "Width of the falloff"
 //! param roundness: float = 1 in 0..1 "1 = circular, 0 = follows the frame's rectangle"
-//! param tint: color = #000000 "Colour the edges fade toward"
+//! param tint: color = #000000 "Color the edges fade toward"
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

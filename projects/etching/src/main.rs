@@ -2,7 +2,7 @@
 //! cellular field through `warp`'s displacement input, traced by
 //! `edge_detect`, mirrored, reduced to two levels by ordered `dither`, and
 //! finally used as the mask that prints ink over paper with `luma_mask` and
-//! two `solid` colours. A slow LFO turns the twist; a key presses harder.
+//! two `solid` colors. A slow LFO turns the twist; a key presses harder.
 
 use zygote_render::prelude::*;
 

@@ -1,5 +1,5 @@
 //! node: voronoi
-//! doc: Animated cellular (Worley) noise; a different character from fBm, with cell colours, edges or distance
+//! doc: Animated cellular (Worley) noise; a different character from fBm, with cell colors, edges or distance
 //! param scale: float = 6 in 1..40 "Cells across the frame"
 //! param speed: float = 0.3 in 0..3 "How fast the cell points wander"
 //! param jitter: float = 1 in 0..1 "How far points stray from a regular grid"

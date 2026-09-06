@@ -1,17 +1,17 @@
 //! node: kaleido
-//! doc: Kaleidoscope: mirrors the source into wedges around a centre
+//! doc: Kaleidoscope: mirrors the source into wedges around a center
 //! input source
 //! param segments: float = 6 in 1..24 "Number of mirror wedges"
 //! param spin: float = 0 in -1..1 "Rotation of the wedge pattern (turns)"
-//! param centre: vec2 = 0.5, 0.5 in 0..1 "Centre of the mirror (UV)"
-//! param tint: color = #ffffff "Multiply the result by this colour"
+//! param center: vec2 = 0.5, 0.5 in 0..1 "Center of the mirror (UV)"
+//! param tint: color = #ffffff "Multiply the result by this color"
 //! param mirror: bool = true "Fold every other wedge so edges meet seamlessly"
 #import zygote::common::{TAU, rotate2}
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let aspect = frame.aspect;
-    let p = (in.uv - params.centre) * vec2<f32>(aspect, 1.0);
+    let p = (in.uv - params.center) * vec2<f32>(aspect, 1.0);
     let radius = length(p);
     var angle = atan2(p.y, p.x) + params.spin * TAU;
 
@@ -25,6 +25,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     let q = vec2<f32>(cos(a), sin(a)) * radius;
-    let uv = q / vec2<f32>(aspect, 1.0) + params.centre;
+    let uv = q / vec2<f32>(aspect, 1.0) + params.center;
     return source(uv) * params.tint;
 }

@@ -4,10 +4,10 @@
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let centred = (in.uv - 0.5) * vec2<f32>(frame.aspect, 1.0);
+    let centered = (in.uv - 0.5) * vec2<f32>(frame.aspect, 1.0);
     let dir = vec2<f32>(cos(params.angle * TAU), sin(params.angle * TAU));
     // Blend a fixed direction with a radial one (offset grows toward the edges).
-    let offset = mix(dir, centred * 2.0, params.radial) * params.amount / vec2<f32>(frame.aspect, 1.0);
+    let offset = mix(dir, centered * 2.0, params.radial) * params.amount / vec2<f32>(frame.aspect, 1.0);
     let src = source(in.uv);
     let r = source(in.uv + offset).r;
     let b = source(in.uv - offset).b;

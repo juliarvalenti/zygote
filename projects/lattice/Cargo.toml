@@ -3,7 +3,7 @@ name = "zygote-lattice"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Op-art: a beating checker moiré folded through a kaleidoscope and mirror tiles; sharp in the centre, blocky at the edges"
+description = "Op-art: a beating checker moiré folded through a kaleidoscope and mirror tiles; sharp in the center, blocky at the edges"
 publish = false
 
 [[bin]]
