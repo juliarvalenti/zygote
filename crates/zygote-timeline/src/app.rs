@@ -2883,6 +2883,8 @@ impl Render for TimelineApp {
         let mut main = v_flex()
             .flex_1()
             .min_w_0()
+            .h_full()
+            .min_h_0()
             .gap_3()
             .child(transport)
             .child(graph);
