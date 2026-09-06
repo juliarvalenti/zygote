@@ -1,0 +1,14 @@
+{
+  "name": "lattice",
+  "nodes": [
+    { "id": "grid",   "type": "checker", "params": { "cells": 7, "rotate": 0.03, "moire": 0.012, "speed": 0.05, "color_a": "#0b0b10", "color_b": "#f2efe6" } },
+    { "id": "fold",   "type": "kaleido", "inputs": ["grid"], "params": { "segments": 6, "spin": 0.0 } },
+    { "id": "tile",   "type": "mirror_tile", "inputs": ["fold"], "params": { "tiles_x": 2, "tiles_y": 2, "zoom": 1.0 } },
+    { "id": "blocks", "type": "pixelate", "inputs": ["tile"], "params": { "cells": 90 } },
+    { "id": "centre", "type": "radial_gradient", "params": { "radius": 0.3, "softness": 0.3 } },
+    { "id": "split",  "type": "luma_mask", "inputs": ["blocks", "tile", "centre"], "params": { "softness": 0.8 } },
+    { "id": "tone",   "type": "color_grade", "inputs": ["split"], "params": { "preset": "cool", "palette_mix": 0.12, "saturation": 1.1 } },
+    { "id": "frame",  "type": "vignette", "inputs": ["tone"], "params": { "amount": 0.5, "radius": 0.6, "roundness": 0.6 } }
+  ],
+  "output": "frame"
+}

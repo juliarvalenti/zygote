@@ -11736,7 +11736,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygote-etching"
+version = "0.1.0"
+dependencies = [
+ "zygote-render",
+]
+
+[[package]]
 name = "zygote-haze"
+version = "0.1.0"
+dependencies = [
+ "zygote-render",
+]
+
+[[package]]
+name = "zygote-lattice"
 version = "0.1.0"
 dependencies = [
  "zygote-render",
@@ -11755,6 +11769,13 @@ dependencies = [
 
 [[package]]
 name = "zygote-mycelium"
+version = "0.1.0"
+dependencies = [
+ "zygote-render",
+]
+
+[[package]]
+name = "zygote-orbs"
 version = "0.1.0"
 dependencies = [
  "zygote-render",

@@ -9,6 +9,9 @@ members = [
     "projects/haze",
     "projects/mycelium",
     "projects/scope",
+    "projects/lattice",
+    "projects/orbs",
+    "projects/etching",
 ]
 
 [workspace.package]

@@ -1,0 +1,131 @@
+{
+  "name": "etching",
+  "nodes": [
+    {
+      "id": "field",
+      "type": "noise",
+      "params": {
+        "scale": 2.2,
+        "speed": 0.12,
+        "octaves": 5,
+        "contrast": 1.4
+      }
+    },
+    {
+      "id": "cells",
+      "type": "voronoi",
+      "params": {
+        "mode": "edges",
+        "scale": 5,
+        "width": 0.12,
+        "speed": 0.15,
+        "jitter": 0.9
+      }
+    },
+    {
+      "id": "bend",
+      "type": "warp",
+      "inputs": [
+        "cells",
+        "field"
+      ],
+      "params": {
+        "amount": 0.15,
+        "twist": 1.1
+      }
+    },
+    {
+      "id": "trace",
+      "type": "edge_detect",
+      "inputs": [
+        "bend"
+      ],
+      "params": {
+        "mode": "lines",
+        "radius": 0.003,
+        "gain": 3.0,
+        "threshold": 0.04
+      }
+    },
+    {
+      "id": "body",
+      "type": "blend",
+      "inputs": [
+        "trace",
+        "bend"
+      ],
+      "params": {
+        "mode": "add",
+        "mix": 0.35
+      }
+    },
+    {
+      "id": "mirror",
+      "type": "mirror_tile",
+      "inputs": [
+        "body"
+      ],
+      "params": {
+        "tiles_x": 1,
+        "tiles_y": 2,
+        "mirror_x": false,
+        "mirror_y": true
+      }
+    },
+    {
+      "id": "screen",
+      "type": "dither",
+      "inputs": [
+        "mirror"
+      ],
+      "params": {
+        "levels": 2,
+        "pattern": "bayer8",
+        "cells": 300,
+        "strength": 1.0
+      }
+    },
+    {
+      "id": "paper",
+      "type": "solid",
+      "params": {
+        "color": "#ebe3cf"
+      }
+    },
+    {
+      "id": "ink",
+      "type": "solid",
+      "params": {
+        "color": "#1c1a2b"
+      }
+    },
+    {
+      "id": "print",
+      "type": "luma_mask",
+      "inputs": [
+        "paper",
+        "ink",
+        "screen"
+      ],
+      "params": {
+        "threshold": 0.3,
+        "softness": 0.2
+      }
+    },
+    {
+      "id": "plate",
+      "type": "vignette",
+      "inputs": [
+        "print"
+      ],
+      "params": {
+        "amount": 0.35,
+        "radius": 0.7,
+        "softness": 0.6,
+        "roundness": 0.2,
+        "tint": "#8a7d63"
+      }
+    }
+  ],
+  "output": "plate"
+}

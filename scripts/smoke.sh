@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 PROJECTS=("$@")
 if [ ${#PROJECTS[@]} -eq 0 ]; then
-  PROJECTS=(demo haze mycelium scope)
+  PROJECTS=(demo haze mycelium scope lattice orbs etching)
 fi
 OUT=${SMOKE_OUT:-target/smoke}
 mkdir -p "$OUT"
@@ -29,6 +29,9 @@ floor_for() {
     haze) echo "${SMOKE_MIN_MEAN:-0.05}" ;;
     mycelium) echo "${SMOKE_MIN_MEAN:-0.03}" ;;
     scope) echo "${SMOKE_MIN_MEAN:-0.004}" ;;
+    lattice) echo "${SMOKE_MIN_MEAN:-0.10}" ;;
+    orbs) echo "${SMOKE_MIN_MEAN:-0.05}" ;;
+    etching) echo "${SMOKE_MIN_MEAN:-0.20}" ;;
     *) echo "${SMOKE_MIN_MEAN:-0.02}" ;;
   esac
 }

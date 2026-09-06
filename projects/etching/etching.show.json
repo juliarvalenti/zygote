@@ -1,0 +1,112 @@
+{
+  "cues": [
+    {
+      "id": 1,
+      "time": 0.0,
+      "label": "fine",
+      "transition": "cut",
+      "values": {
+        "bend.twist": 1.1,
+        "bend.amount": 0.12,
+        "trace.gain": 3.0,
+        "screen.cells": 360.0,
+        "mirror.tiles_y": 2,
+        "cells.scale": 5.0,
+        "body.mix": 0.35
+      }
+    },
+    {
+      "id": 2,
+      "time": 10.0,
+      "label": "coarse",
+      "transition": "interpolate",
+      "values": {
+        "bend.twist": 2.4,
+        "bend.amount": 0.2,
+        "trace.gain": 4.0,
+        "screen.cells": 200.0,
+        "mirror.tiles_y": 2,
+        "cells.scale": 3.0,
+        "body.mix": 0.6
+      }
+    },
+    {
+      "id": 3,
+      "time": 20.0,
+      "label": "quad",
+      "transition": "interpolate",
+      "values": {
+        "bend.twist": 0.4,
+        "bend.amount": 0.08,
+        "trace.gain": 2.5,
+        "screen.cells": 420.0,
+        "mirror.tiles_y": 4,
+        "cells.scale": 8.0,
+        "body.mix": 0.2
+      }
+    },
+    {
+      "id": 4,
+      "time": 30.0,
+      "label": "fine",
+      "transition": "interpolate",
+      "values": {
+        "bend.twist": 1.1,
+        "bend.amount": 0.12,
+        "trace.gain": 3.0,
+        "screen.cells": 360.0,
+        "mirror.tiles_y": 2,
+        "cells.scale": 5.0,
+        "body.mix": 0.35
+      }
+    }
+  ],
+  "duration": 36.0,
+  "looping": true,
+  "modulation": {
+    "sources": [
+      {
+        "id": "turn",
+        "kind": "lfo",
+        "rate_hz": 0.02,
+        "phase": 0.0,
+        "shape": "sine"
+      },
+      {
+        "id": "press",
+        "kind": "envelope",
+        "adsr": {
+          "attack": 0.05,
+          "decay": 0.8,
+          "sustain": 0.3,
+          "release": 1.5
+        },
+        "trigger": "press"
+      }
+    ],
+    "assignments": [
+      {
+        "target": "bend.twist",
+        "source": "turn",
+        "depth": 0.6
+      },
+      {
+        "target": "trace.gain",
+        "source": "press",
+        "depth": 3.0
+      },
+      {
+        "target": "bend.amount",
+        "source": "press",
+        "depth": 0.08
+      }
+    ]
+  },
+  "keys": {
+    "q": {
+      "action": "trigger",
+      "trigger": "press"
+    }
+  },
+  "next_id": 5
+}

@@ -56,10 +56,17 @@ envelope, **Save**. The show file lands next to the project.
 | `projects/haze` | Monochrome pulsing geometry and 3D-noise haze from a central point. Three WGSL nodes. |
 | `projects/mycelium` | A CPU simulation source (tip-growth network traced by nutrient agents) with LFOs and an envelope on its parameters. |
 | `projects/scope` | An analog XY oscilloscope: the beam traces Lissajous knots onto slow phosphor; cues step through harmonic ratios, an LFO turns the figure, keys flash and wipe it. Three WGSL nodes. |
+| `projects/lattice` | Op-art from builtins only: a beating `checker` moiré through `kaleido` and `mirror_tile`, sharp in the centre and `pixelate`d at the edges via a `radial_gradient` mask into `luma_mask`. Keys chunk the pixels and kick the spin. |
+| `projects/orbs` | Bloom study: `voronoi` bubbles coloured by a palette, smeared upward by `streak`, thresholded `blur` added back with `blend`. LFOs breathe the cells and pulse the glow. |
+| `projects/etching` | Ink on paper: cell edges warped by noise through `warp`'s displacement input, traced by `edge_detect`, mirrored, `dither`ed to two levels and printed as two `solid` colours through `luma_mask`. |
 
 | `projects/haze` | `projects/mycelium` | `projects/scope` |
 | --- | --- | --- |
 | ![](docs/render-haze.png) | ![](docs/render-mycelium.png) | ![](docs/render-scope.png) |
+
+| `projects/lattice` | `projects/orbs` | `projects/etching` |
+| --- | --- | --- |
+| ![](docs/render-lattice.png) | ![](docs/render-orbs.png) | ![](docs/render-etching.png) |
 
 | the timeline | `projects/scope` through its cues |
 | --- | --- |
@@ -216,7 +223,7 @@ must not collide with imported items; the header parser rejects that.
 | geometry | `warp` (procedural, or a `displacement` input), `kaleido`, `mirror_tile`, `pixelate` |
 | compositing | `blend` (multiply / screen / add / alpha), `luma_mask` (b over a through a mask input, or b's own brightness) |
 | time | `feedback` (zoom / rotate / hue spiral trails), `streak` (directional trails) |
-| analysis and finishing | `edge_detect`, `blur` (one axis or both; threshold for bloom), `dither`, `vignette`, `color_grade` |
+| analysis and finishing | `edge_detect`, `blur` (one axis or both; threshold for bloom), `dither`, `vignette`, `color_grade` (palette remap keeps the source luminance) |
 
 ![](docs/nodes.png)
 

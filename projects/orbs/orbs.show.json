@@ -1,0 +1,25 @@
+{
+  "cues": [
+    { "id": 1, "time": 0.0,  "label": "drift",  "transition": "cut",         "values": { "cells.scale": 4.0, "rise.angle": 0.25, "rise.decay": 0.9,  "glow.radius": 0.045, "warm.preset": "ember" } },
+    { "id": 2, "time": 10.0, "label": "dense",  "transition": "interpolate", "values": { "cells.scale": 7.0, "rise.angle": 0.25, "rise.decay": 0.93, "glow.radius": 0.03,  "warm.preset": "ember" } },
+    { "id": 3, "time": 20.0, "label": "sideways","transition": "interpolate","values": { "cells.scale": 5.0, "rise.angle": 0.0,  "rise.decay": 0.95, "glow.radius": 0.06,  "warm.preset": "neon" } },
+    { "id": 4, "time": 30.0, "label": "few",    "transition": "interpolate", "values": { "cells.scale": 2.0, "rise.angle": 0.75, "rise.decay": 0.88, "glow.radius": 0.08,  "warm.preset": "warm" } },
+    { "id": 5, "time": 40.0, "label": "drift",  "transition": "interpolate", "values": { "cells.scale": 4.0, "rise.angle": 0.25, "rise.decay": 0.9,  "glow.radius": 0.045, "warm.preset": "ember" } }
+  ],
+  "duration": 48.0,
+  "looping": true,
+  "modulation": {
+    "sources": [
+      { "id": "breathe", "kind": "lfo", "rate_hz": 0.04, "phase": 0.0,  "shape": "sine" },
+      { "id": "pulse",   "kind": "lfo", "rate_hz": 0.12, "phase": 0.5,  "shape": "sine" },
+      { "id": "flash",   "kind": "envelope", "adsr": { "attack": 0.02, "decay": 0.5, "sustain": 0.2, "release": 1.0 }, "trigger": "flash" }
+    ],
+    "assignments": [
+      { "target": "cells.jitter", "source": "breathe", "depth": 0.35 },
+      { "target": "glow.radius",  "source": "pulse",   "depth": 0.012 },
+      { "target": "glow.gain",    "source": "flash",   "depth": 2.0 }
+    ]
+  },
+  "keys": { "q": { "action": "trigger", "trigger": "flash" } },
+  "next_id": 6
+}

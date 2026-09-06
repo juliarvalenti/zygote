@@ -37,7 +37,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     switch params.mode {
         case 0u: { out = nearest; }
         case 2u: { out = vec3<f32>(clamp(f1, 0.0, 1.0)); }
-        case 3u: { out = vec3<f32>(1.0 - smoothstep(0.0, 0.7, f1)); }
+        case 3u: {
+            let core = 1.0 - smoothstep(0.0, 0.5, f1);
+            out = vec3<f32>(core * core);
+        }
         default: { out = vec3<f32>(1.0 - smoothstep(0.0, params.width, f2 - f1)); }
     }
     out = clamp((out - 0.5) * params.contrast + 0.5, vec3<f32>(0.0), vec3<f32>(1.0));

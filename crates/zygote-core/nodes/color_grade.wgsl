@@ -22,7 +22,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         c = floor(c * levels + 0.5) / levels;
     }
     let l2 = clamp(luma(c), 0.0, 1.0);
-    c = mix(c, palette(l2, f32(params.preset)), params.palette_mix);
+    // The cosine palettes are cyclic and not dark at t = 0, so take only
+    // their hue: scale the palette colour to the source's own luminance.
+    let pal = palette(l2, f32(params.preset));
+    let toned = pal * (l2 / max(luma(pal), 1e-3));
+    c = mix(c, toned, params.palette_mix);
     if has_lut() {
         c = mix(c, lut(vec2<f32>(l2, 0.5)).rgb, params.lut_mix);
     }

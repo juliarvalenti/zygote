@@ -1,0 +1,149 @@
+{
+  "cues": [
+    {
+      "id": 1,
+      "time": 0.0,
+      "label": "six",
+      "transition": "cut",
+      "values": {
+        "fold.segments": 6.0,
+        "tile.tiles_x": 2,
+        "tile.tiles_y": 2,
+        "grid.moire": 0.012,
+        "blocks.cells": 90.0,
+        "tone.palette_mix": 0.12
+      }
+    },
+    {
+      "id": 2,
+      "time": 8.0,
+      "label": "eight",
+      "transition": "interpolate",
+      "values": {
+        "fold.segments": 8.0,
+        "tile.tiles_x": 2,
+        "tile.tiles_y": 2,
+        "grid.moire": 0.02,
+        "blocks.cells": 70.0,
+        "tone.palette_mix": 0.3
+      }
+    },
+    {
+      "id": 3,
+      "time": 16.0,
+      "label": "twelve",
+      "transition": "interpolate",
+      "values": {
+        "fold.segments": 12.0,
+        "tile.tiles_x": 3,
+        "tile.tiles_y": 2,
+        "grid.moire": 0.008,
+        "blocks.cells": 120.0,
+        "tone.palette_mix": 0.08
+      }
+    },
+    {
+      "id": 4,
+      "time": 24.0,
+      "label": "coarse",
+      "transition": "cut",
+      "values": {
+        "fold.segments": 4.0,
+        "tile.tiles_x": 1,
+        "tile.tiles_y": 1,
+        "grid.moire": 0.03,
+        "blocks.cells": 24.0,
+        "tone.palette_mix": 0.5
+      }
+    },
+    {
+      "id": 5,
+      "time": 32.0,
+      "label": "back",
+      "transition": "interpolate",
+      "values": {
+        "fold.segments": 6.0,
+        "tile.tiles_x": 2,
+        "tile.tiles_y": 2,
+        "grid.moire": 0.012,
+        "blocks.cells": 90.0,
+        "tone.palette_mix": 0.12
+      }
+    }
+  ],
+  "duration": 40.0,
+  "looping": true,
+  "modulation": {
+    "sources": [
+      {
+        "id": "turn",
+        "kind": "lfo",
+        "rate_hz": 0.015,
+        "phase": 0.0,
+        "shape": "sine"
+      },
+      {
+        "id": "beat",
+        "kind": "lfo",
+        "rate_hz": 0.05,
+        "phase": 0.25,
+        "shape": "triangle"
+      },
+      {
+        "id": "chunk",
+        "kind": "envelope",
+        "adsr": {
+          "attack": 0.02,
+          "decay": 0.4,
+          "sustain": 0.5,
+          "release": 1.2
+        },
+        "trigger": "chunk"
+      },
+      {
+        "id": "kick",
+        "kind": "envelope",
+        "adsr": {
+          "attack": 0.01,
+          "decay": 0.3,
+          "sustain": 0.0,
+          "release": 0.3
+        },
+        "trigger": "kick"
+      }
+    ],
+    "assignments": [
+      {
+        "target": "grid.rotate",
+        "source": "turn",
+        "depth": 0.08
+      },
+      {
+        "target": "grid.moire",
+        "source": "beat",
+        "depth": 0.006
+      },
+      {
+        "target": "blocks.cells",
+        "source": "chunk",
+        "depth": -60.0
+      },
+      {
+        "target": "fold.spin",
+        "source": "kick",
+        "depth": 0.08
+      }
+    ]
+  },
+  "keys": {
+    "q": {
+      "action": "trigger",
+      "trigger": "chunk"
+    },
+    "w": {
+      "action": "trigger",
+      "trigger": "kick"
+    }
+  },
+  "next_id": 6
+}
