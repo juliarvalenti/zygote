@@ -36,8 +36,6 @@ pub fn node_sampler() -> ImageSampler {
 #[derive(Resource, Default)]
 pub struct Fallbacks {
     pub black: Handle<Image>,
-    /// Placeholder shown by `camera` nodes until a capture backend writes frames.
-    pub camera_placeholder: Handle<Image>,
     /// Magenta/black checker for image assets that do not exist or failed to load.
     pub missing: Handle<Image>,
 }
@@ -57,31 +55,6 @@ impl Fallbacks {
         );
         black.sampler = node_sampler();
         fallbacks.black = images.add(black);
-
-        // Diagonal stripes: obviously synthetic, so a missing camera is never
-        // mistaken for a black feed.
-        let (w, h) = (256u32, 144u32);
-        let mut data = Vec::with_capacity((w * h * 4) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                let on = ((x + y) / 16) % 2 == 0;
-                let (r, g, b) = if on { (40, 40, 48) } else { (120, 30, 140) };
-                data.extend_from_slice(&[r, g, b, 255]);
-            }
-        }
-        let mut placeholder = Image::new(
-            Extent3d {
-                width: w,
-                height: h,
-                ..Default::default()
-            },
-            TextureDimension::D2,
-            data,
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
-        );
-        placeholder.sampler = node_sampler();
-        fallbacks.camera_placeholder = images.add(placeholder);
 
         let (w, h) = (64u32, 64u32);
         let mut data = Vec::with_capacity((w * h * 4) as usize);
