@@ -1,0 +1,15 @@
+{
+  "name": "thermal",
+  "nodes": [
+    { "id": "cam",     "type": "camera", "device": "0", "params": { "mirror": true, "on_pause": "live" } },
+    { "id": "sensor",  "type": "pixelate", "inputs": ["cam"], "params": { "cells": 160, "square": true } },
+    { "id": "heat",    "type": "color_grade", "inputs": ["sensor"], "params": { "preset": "ember", "palette_mix": 1.0, "saturation": 1.2 } },
+    { "id": "contour", "type": "edge_detect", "inputs": ["sensor"], "params": { "radius": 0.0025, "gain": 3.0, "threshold": 0.12, "mode": "lines" } },
+    { "id": "traced",  "type": "blend", "inputs": ["heat", "contour"], "params": { "mode": "screen", "mix": 0.3 } },
+    { "id": "glow",    "type": "blur", "inputs": ["traced"], "params": { "radius": 0.03, "threshold": 0.6, "gain": 1.3, "direction": "both" } },
+    { "id": "bloom",   "type": "blend", "inputs": ["traced", "glow"], "params": { "mode": "add", "mix": 0.7 } },
+    { "id": "rise",    "type": "streak", "inputs": ["bloom"], "params": { "angle": 0.25, "distance": 0.0, "decay": 0.0, "spread": 0.0, "mix": 1.0 } },
+    { "id": "lens",    "type": "vignette", "inputs": ["rise"], "params": { "amount": 0.75, "radius": 0.45, "softness": 0.7, "roundness": 0.5 } }
+  ],
+  "output": "lens"
+}

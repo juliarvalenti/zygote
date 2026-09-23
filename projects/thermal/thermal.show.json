@@ -1,0 +1,35 @@
+{
+  "cues": [
+    { "id": 1, "time": 0.0,  "label": "ironbow",   "transition": "cut",         "values": { "heat.preset": "ember",    "heat.palette_mix": 1.0, "heat.saturation": 1.2, "sensor.cells": 160.0, "traced.mix": 0.3,  "glow.gain": 1.3, "rise.distance": 0.0,   "rise.decay": 0.0 } },
+    { "id": 2, "time": 8.0,  "label": "contour",   "transition": "interpolate", "values": { "heat.preset": "ember",    "heat.palette_mix": 1.0, "heat.saturation": 1.2, "sensor.cells": 220.0, "traced.mix": 0.85, "glow.gain": 1.0, "rise.distance": 0.0,   "rise.decay": 0.0 } },
+    { "id": 3, "time": 16.0, "label": "arctic",    "transition": "cut",         "values": { "heat.preset": "cool",     "heat.palette_mix": 1.0, "heat.saturation": 1.3, "sensor.cells": 160.0, "traced.mix": 0.3,  "glow.gain": 1.4, "rise.distance": 0.0,   "rise.decay": 0.0 } },
+    { "id": 4, "time": 24.0, "label": "rainbow",   "transition": "cut",         "values": { "heat.preset": "spectrum", "heat.palette_mix": 1.0, "heat.saturation": 1.4, "sensor.cells": 140.0, "traced.mix": 0.25, "glow.gain": 1.3, "rise.distance": 0.0,   "rise.decay": 0.0 } },
+    { "id": 5, "time": 32.0, "label": "white hot", "transition": "cut",         "values": { "heat.preset": "ember",    "heat.palette_mix": 0.0, "heat.saturation": 0.0, "sensor.cells": 160.0, "traced.mix": 0.5,  "glow.gain": 1.6, "rise.distance": 0.0,   "rise.decay": 0.0 } },
+    { "id": 6, "time": 40.0, "label": "heat rise", "transition": "interpolate", "values": { "heat.preset": "ember",    "heat.palette_mix": 1.0, "heat.saturation": 1.3, "sensor.cells": 160.0, "traced.mix": 0.3,  "glow.gain": 1.5, "rise.distance": 0.006, "rise.decay": 0.88 } }
+  ],
+  "duration": 48.0,
+  "looping": true,
+  "modulation": {
+    "sources": [
+      { "id": "breathe", "kind": "lfo", "rate_hz": 0.08, "phase": 0.0, "shape": "sine" },
+      { "id": "flare",   "kind": "envelope", "adsr": { "attack": 0.01, "decay": 0.4,  "sustain": 0.0, "release": 0.5 }, "trigger": "flare" },
+      { "id": "glitch",  "kind": "envelope", "adsr": { "attack": 0.01, "decay": 0.15, "sustain": 0.0, "release": 0.3 }, "trigger": "glitch" }
+    ],
+    "assignments": [
+      { "target": "lens.radius",  "source": "breathe", "depth": 0.05 },
+      { "target": "glow.gain",    "source": "flare",   "depth": 2.5 },
+      { "target": "sensor.cells", "source": "glitch",  "depth": -130.0 }
+    ]
+  },
+  "keys": {
+    "1": { "action": "cue", "id": 1 },
+    "2": { "action": "cue", "id": 2 },
+    "3": { "action": "cue", "id": 3 },
+    "4": { "action": "cue", "id": 4 },
+    "5": { "action": "cue", "id": 5 },
+    "6": { "action": "cue", "id": 6 },
+    "q": { "action": "trigger", "trigger": "flare" },
+    "w": { "action": "trigger", "trigger": "glitch" }
+  },
+  "next_id": 7
+}

@@ -12113,6 +12113,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zygote-thermal"
+version = "0.1.0"
+dependencies = [
+ "zygote-render",
+]
+
+[[package]]
 name = "zygote-timeline"
 version = "0.1.0"
 dependencies = [

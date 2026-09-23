@@ -1,0 +1,14 @@
+[package]
+name = "zygote-thermal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A thermal camera: low-res sensor, false color by luminance, contour edges and heat bloom; cues are its palette modes"
+publish = false
+
+[[bin]]
+name = "zygote-thermal"
+path = "src/main.rs"
+
+[dependencies]
+zygote-render.workspace = true
